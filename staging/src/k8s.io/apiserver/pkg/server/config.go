@@ -748,6 +748,8 @@ func (c completedConfig) New(name string, delegationTarget DelegationTarget) (*G
 
 func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 	handler := genericapifilters.WithAuthorization(apiHandler, c.Authorization.Authorizer, c.Serializer)
+	// add an artificial delay adder.
+	handler = genericfilters.WithArtificialDelayAdder(handler, "delay-adder", c.LongRunningFunc)
 	if c.FlowControl != nil {
 		handler = genericfilters.WithPriorityAndFairness(handler, c.LongRunningFunc, c.FlowControl)
 	} else {
