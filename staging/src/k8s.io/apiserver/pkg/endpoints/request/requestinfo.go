@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/validation/path"
 	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
@@ -62,6 +63,9 @@ type RequestInfo struct {
 	Name string
 	// Parts are the path parts for the request, always starting with /{resource}/{name}
 	Parts []string
+
+	// ReceiveTime is an approximate time the request was received.
+	ReceiveTime time.Time
 }
 
 // specialVerbs contains just strings which are used in REST paths for special actions that don't fall under the normal
@@ -120,6 +124,7 @@ func (r *RequestInfoFactory) NewRequestInfo(req *http.Request) (*RequestInfo, er
 		IsResourceRequest: false,
 		Path:              req.URL.Path,
 		Verb:              strings.ToLower(req.Method),
+		ReceiveTime:	   time.Now(),
 	}
 
 	currentParts := splitPath(req.URL.Path)

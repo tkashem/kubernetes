@@ -30,6 +30,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apiserver/pkg/endpoints/filters"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	"k8s.io/apiserver/pkg/server/mux"
 )
@@ -186,5 +187,9 @@ func serviceErrorHandler(s runtime.NegotiatedSerializer, serviceErr restful.Serv
 
 // ServeHTTP makes it an http.Handler
 func (a *APIServerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	a.FullHandlerChain.ServeHTTP(w, r)
+	// This is the entry point where net/http delegates to our handler.
+	// Wire the "request receive time" handler here.
+	fullHandlerChainWithReceiveTime := filters.WithRequestReceiveTime(a.FullHandlerChain)
+
+	fullHandlerChainWithReceiveTime.ServeHTTP(w, r)
 }

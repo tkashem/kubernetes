@@ -11,6 +11,7 @@ go_test(
     srcs = [
         "context_test.go",
         "requestinfo_test.go",
+        "receive_time_test.go",
     ],
     embed = [":go_default_library"],
     deps = [
@@ -26,6 +27,7 @@ go_library(
         "context.go",
         "doc.go",
         "requestinfo.go",
+        "receive_time.go",
     ],
     importmap = "k8s.io/kubernetes/vendor/k8s.io/apiserver/pkg/endpoints/request",
     importpath = "k8s.io/apiserver/pkg/endpoints/request",

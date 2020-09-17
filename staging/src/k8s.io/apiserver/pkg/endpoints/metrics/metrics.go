@@ -365,8 +365,12 @@ func MonitorRequest(req *http.Request, verb, group, version, resource, subresour
 // InstrumentRouteFunc works like Prometheus' InstrumentHandlerFunc but wraps
 // the go-restful RouteFunction instead of a HandlerFunc plus some Kubernetes endpoint specific information.
 func InstrumentRouteFunc(verb, group, version, resource, subresource, scope, component string, deprecated bool, removedRelease string, routeFunc restful.RouteFunction) restful.RouteFunction {
-	return restful.RouteFunction(func(request *restful.Request, response *restful.Response) {
+	return restful.RouteFunction(func(req *restful.Request, response *restful.Response) {
 		now := time.Now()
+		requestReceiveTime, ok := request.WithReceiveTimeFrom(req.Request.Context())
+		if ok {
+			now = requestReceiveTime
+		}
 
 		delegate := &ResponseWriterDelegator{ResponseWriter: response.ResponseWriter}
 
@@ -381,9 +385,9 @@ func InstrumentRouteFunc(verb, group, version, resource, subresource, scope, com
 		}
 		response.ResponseWriter = rw
 
-		routeFunc(request, response)
+		routeFunc(req, response)
 
-		MonitorRequest(request.Request, verb, group, version, resource, subresource, scope, component, deprecated, removedRelease, delegate.Header().Get("Content-Type"), delegate.Status(), delegate.ContentLength(), time.Since(now))
+		MonitorRequest(req.Request, verb, group, version, resource, subresource, scope, component, deprecated, removedRelease, delegate.Header().Get("Content-Type"), delegate.Status(), delegate.ContentLength(), time.Since(now))
 	})
 }
 
@@ -391,6 +395,10 @@ func InstrumentRouteFunc(verb, group, version, resource, subresource, scope, com
 func InstrumentHandlerFunc(verb, group, version, resource, subresource, scope, component string, deprecated bool, removedRelease string, handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		now := time.Now()
+		requestReceiveTime, ok := request.WithReceiveTimeFrom(req.Context())
+		if ok {
+			now = requestReceiveTime
+		}
 
 		delegate := &ResponseWriterDelegator{ResponseWriter: w}
 
