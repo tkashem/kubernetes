@@ -101,6 +101,11 @@ func WithLateConnectionFilter(handler http.Handler) http.Handler {
 func WithNonReadyRequestLogging(handler http.Handler, hasBeenReadyCh <-chan struct{}) http.Handler {
 	var nonReadyRequestReceived atomic.Bool
 
+	if hasBeenReadyCh == nil {
+		klog.Error("WithNonReadyRequestLogging: hasBeenReadyCh is nil, not setting up the handler")
+		return handler
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if hasBeenReadyCh != nil {
 			select {
