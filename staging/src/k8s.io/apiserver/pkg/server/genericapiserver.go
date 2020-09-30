@@ -365,7 +365,7 @@ func (s preparedGenericAPIServer) Run(stopCh <-chan struct{}) error {
 	}
 
 	go func() {
-		<-delayedStopCh
+		<-stoppedCh
 		s.Eventf(corev1.EventTypeNormal, "TerminationStoppedServing", "Server has stopped listening")
 	}()
 
