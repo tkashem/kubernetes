@@ -288,7 +288,10 @@ func (d *DeferredDiscoveryRESTMapper) RESTMapping(gk schema.GroupKind, versions 
 		return nil, err
 	}
 	m, err = del.RESTMapping(gk, versions...)
-	if err != nil && !d.cl.Fresh() {
+	if err != nil {
+		return nil, err
+	}
+	if !d.cl.Fresh() {
 		d.Reset()
 		m, err = d.RESTMapping(gk, versions...)
 	}
@@ -304,6 +307,9 @@ func (d *DeferredDiscoveryRESTMapper) RESTMappings(gk schema.GroupKind, versions
 		return nil, err
 	}
 	ms, err = del.RESTMappings(gk, versions...)
+	if err != nil {
+		return nil, err
+	}
 	if len(ms) == 0 && !d.cl.Fresh() {
 		d.Reset()
 		ms, err = d.RESTMappings(gk, versions...)
