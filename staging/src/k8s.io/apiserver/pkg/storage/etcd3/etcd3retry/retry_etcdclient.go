@@ -2,6 +2,7 @@ package etcd3retry
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -168,6 +169,7 @@ func isRetriableEtcdError(err error) (errorLabel string, retry bool) {
 	case ok && etcdError.Code() == codes.Unavailable:
 		errorLabel = "Unavailable"
 		retry = true
+
 	case ok:
 		// any other error, we don't retry
 		return
@@ -176,6 +178,10 @@ func isRetriableEtcdError(err error) (errorLabel string, retry bool) {
 	//  error as it is not deemed transient. How about "EOF"?
 	case net.IsConnectionReset(err):
 		errorLabel = "ConnectionReset"
+		retry = true
+
+	case strings.Contains(err.Error(), "transport is closing"):
+		errorLabel = "TransportClosing"
 		retry = true
 	}
 
