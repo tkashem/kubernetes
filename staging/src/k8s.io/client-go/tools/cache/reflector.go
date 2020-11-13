@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/rand"
 	"reflect"
+	"strconv"
 	"sync"
 	"time"
 
@@ -478,6 +479,18 @@ loop:
 				continue
 			}
 			newResourceVersion := meta.GetResourceVersion()
+
+			// Test
+			backInTime, err := r.isBackInTime(newResourceVersion)
+			if err != nil {
+				utilruntime.HandleError(fmt.Errorf("error while trying to find a stitch in time: %v", err))
+			}
+			if backInTime {
+				err := fmt.Errorf("found a stich in time - old:%s new:%s", r.LastSyncResourceVersion(), newResourceVersion)
+				utilruntime.HandleError(err)
+				return err
+			}
+
 			switch event.Type {
 			case watch.Added:
 				err := r.store.Add(event.Object)
@@ -528,6 +541,23 @@ func (r *Reflector) setLastSyncResourceVersion(v string) {
 	r.lastSyncResourceVersionMutex.Lock()
 	defer r.lastSyncResourceVersionMutex.Unlock()
 	r.lastSyncResourceVersion = v
+}
+
+func (r *Reflector) isBackInTime(rv string) (bool, error) {
+	r.lastSyncResourceVersionMutex.Lock()
+	defer r.lastSyncResourceVersionMutex.Unlock()
+
+	now, err := strconv.Atoi(rv)
+	if err != nil {
+		return false, err
+	}
+
+	last, err := strconv.Atoi(r.lastSyncResourceVersion)
+	if err != nil {
+		return false, err
+	}
+
+	return now < last, nil
 }
 
 // relistResourceVersion determines the resource version the reflector should list or relist from.

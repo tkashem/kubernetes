@@ -152,7 +152,7 @@ func TestReflectorWatchHandler(t *testing.T) {
 		fw.Add(&v1.Service{ObjectMeta: metav1.ObjectMeta{Name: "rejected"}})
 		fw.Delete(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo"}})
 		fw.Modify(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "bar", ResourceVersion: "55"}})
-		fw.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "baz", ResourceVersion: "32"}})
+		fw.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "baz", ResourceVersion: "65"}})
 		fw.Stop()
 	}()
 	var resumeRV string
@@ -172,7 +172,7 @@ func TestReflectorWatchHandler(t *testing.T) {
 		{mkPod("foo", ""), false},
 		{mkPod("rejected", ""), false},
 		{mkPod("bar", "55"), true},
-		{mkPod("baz", "32"), true},
+		{mkPod("baz", "65"), true},
 	}
 	for _, item := range table {
 		obj, exists, _ := s.Get(item.Pod)
@@ -188,12 +188,12 @@ func TestReflectorWatchHandler(t *testing.T) {
 	}
 
 	// RV should send the last version we see.
-	if e, a := "32", resumeRV; e != a {
+	if e, a := "65", resumeRV; e != a {
 		t.Errorf("expected %v, got %v", e, a)
 	}
 
 	// last sync resource version should be the last version synced with store
-	if e, a := "32", g.LastSyncResourceVersion(); e != a {
+	if e, a := "65", g.LastSyncResourceVersion(); e != a {
 		t.Errorf("expected %v, got %v", e, a)
 	}
 }
