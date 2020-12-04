@@ -41,6 +41,7 @@ go_library(
         "longrunning.go",
         "maxinflight.go",
         "priority-and-fairness.go",
+        "respone_write_latency_metric.go",
         "timeout.go",
         "waitgroup.go",
         "wrap.go",

@@ -195,6 +195,16 @@ var (
 		[]string{"verb", "group", "version", "resource", "subresource", "scope"},
 	)
 
+	responseWriteLatency = compbasemetrics.NewHistogramVec(
+		&compbasemetrics.HistogramOpts{
+			Name:           "apiserver_response_write_seconds",
+			Help:           "Request response latency distribution in seconds",
+			Buckets:        []float64{0.0001, 0.0005, 0.001, 0.01, 0.025, 0.050, 0.1, 0.25, 0.5, 1.0, 10.0, 30.0, 60.0},
+			StabilityLevel: compbasemetrics.ALPHA,
+		},
+		[]string{"resource", "verb"},
+	)
+
 	kubectlExeRegexp = regexp.MustCompile(`^.*((?i:kubectl\.exe))`)
 
 	metrics = []resettableCollector{
@@ -212,6 +222,7 @@ var (
 		currentInqueueRequests,
 		requestTerminationsTotal,
 		requestAbortsTotal,
+		responseWriteLatency,
 	}
 
 	// these are the known (e.g. whitelisted/known) content types which we will report for
@@ -284,6 +295,10 @@ func Reset() {
 	for _, metric := range metrics {
 		metric.Reset()
 	}
+}
+
+func RecordResponseWriteLatency(ri *request.RequestInfo, elapsed time.Duration) {
+	responseWriteLatency.WithLabelValues(ri.Resource, ri.Verb).Observe(elapsed.Seconds())
 }
 
 // UpdateInflightRequestMetrics reports concurrency metrics classified by

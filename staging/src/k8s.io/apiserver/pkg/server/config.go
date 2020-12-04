@@ -769,6 +769,7 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 	handler = genericfilters.WithWaitGroup(handler, c.LongRunningFunc, c.HandlerChainWaitGroup)
 	handler = WithNonReadyRequestLogging(handler, c.hasBeenReadyCh)
 	handler = WithLateConnectionFilter(handler)
+	handler = genericfilters.WithResponseWriteLatencyMetric(handler, c.LongRunningFunc)
 	handler = genericapifilters.WithRequestInfo(handler, c.RequestInfoResolver)
 	if c.SecureServing != nil && !c.SecureServing.DisableHTTP2 && c.GoawayChance > 0 {
 		handler = genericfilters.WithProbabilisticGoaway(handler, c.GoawayChance)
