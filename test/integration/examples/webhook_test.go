@@ -52,7 +52,7 @@ func TestWebhookLoopback(t *testing.T) {
 
 			// Hook into audit to watch requests
 			config.GenericConfig.AuditBackend = auditSinkFunc(func(events ...*auditinternal.Event) {})
-			config.GenericConfig.AuditPolicyRuleEvaluator = auditPolicyRuleEvaluator(func(attrs authorizer.Attributes) (auditinternal.Level, []auditinternal.Stage) {
+			config.GenericConfig.AuditPolicyRuleEvaluator = newAuditPolicyRuleEvaluator(func(attrs authorizer.Attributes) (auditinternal.Level, []auditinternal.Stage) {
 				if attrs.GetPath() == webhookPath {
 					if attrs.GetUser().GetName() != "system:apiserver" {
 						t.Errorf("expected user %q, got %q", "system:apiserver", attrs.GetUser().GetName())
@@ -106,10 +106,25 @@ func TestWebhookLoopback(t *testing.T) {
 	}
 }
 
-type auditPolicyRuleEvaluator func(authorizer.Attributes) (auditinternal.Level, []auditinternal.Stage)
+func newAuditPolicyRuleEvaluator(levelAndStagesFunc func(authorizer.Attributes) (auditinternal.Level, []auditinternal.Stage)) *auditPolicyRuleEvaluator {
+	return &auditPolicyRuleEvaluator{
+		LevelAndStagesFunc: levelAndStagesFunc,
+	}
+}
 
-func (f auditPolicyRuleEvaluator) LevelAndStages(attrs authorizer.Attributes) (auditinternal.Level, []auditinternal.Stage) {
-	return f(attrs)
+type auditPolicyRuleEvaluator struct {
+	LevelAndStagesFunc func(authorizer.Attributes) (auditinternal.Level, []auditinternal.Stage)
+}
+
+func (c auditPolicyRuleEvaluator) LevelAndStages(attrs authorizer.Attributes) (auditinternal.Level, []auditinternal.Stage) {
+	if c.LevelAndStagesFunc != nil {
+		return c.LevelAndStagesFunc(attrs)
+	}
+	return auditinternal.LevelNone, nil
+}
+
+func (c auditPolicyRuleEvaluator) IsOmitManagedFieldsEnabled() bool {
+	return false
 }
 
 type auditSinkFunc func(events ...*auditinternal.Event)

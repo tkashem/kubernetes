@@ -17,11 +17,13 @@ limitations under the License.
 package policy
 
 import (
+	"strconv"
 	"strings"
 
 	"k8s.io/apiserver/pkg/apis/audit"
 	auditinternal "k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
+	"k8s.io/klog/v2"
 )
 
 const (
@@ -34,7 +36,10 @@ func NewPolicyRuleEvaluator(policy *audit.Policy) auditinternal.PolicyRuleEvalua
 	for i, rule := range policy.Rules {
 		policy.Rules[i].OmitStages = unionStages(policy.OmitStages, rule.OmitStages)
 	}
-	return &policyRuleEvaluator{*policy}
+	return &policyRuleEvaluator{
+		Policy:            *policy,
+		omitManagedFields: isOmitManagedFieldsEnabled(policy),
+	}
 }
 
 func unionStages(stageLists ...[]audit.Stage) []audit.Stage {
@@ -54,11 +59,12 @@ func unionStages(stageLists ...[]audit.Stage) []audit.Stage {
 // NewFakePolicyRuleEvaluator creates a fake policy rule evaluator that returns
 // a constant level for all requests (for testing).
 func NewFakePolicyRuleEvaluator(level audit.Level, stage []audit.Stage) auditinternal.PolicyRuleEvaluator {
-	return &fakePolicyRuleEvaluator{level, stage}
+	return &fakePolicyRuleEvaluator{level: level, stage: stage}
 }
 
 type policyRuleEvaluator struct {
 	audit.Policy
+	omitManagedFields bool
 }
 
 func (p *policyRuleEvaluator) LevelAndStages(attrs authorizer.Attributes) (audit.Level, []audit.Stage) {
@@ -68,6 +74,32 @@ func (p *policyRuleEvaluator) LevelAndStages(attrs authorizer.Attributes) (audit
 		}
 	}
 	return DefaultAuditLevel, p.OmitStages
+}
+
+func (p *policyRuleEvaluator) IsOmitManagedFieldsEnabled() bool {
+	return p.omitManagedFields
+}
+
+func isOmitManagedFieldsEnabled(policy *audit.Policy) bool {
+	const annotationKey = "audit.kubernetes.io/omit-managed-fields"
+
+	// If we can't decide, return false to maintain current behavior which is
+	// to retain the managed fields in the audit.
+	if policy == nil {
+		return false
+	}
+	value, exists := policy.Annotations[annotationKey]
+	if !exists {
+		return false
+	}
+
+	omitManagedFields, err := strconv.ParseBool(value)
+	if err != nil {
+		klog.ErrorS(err, "Failed to determine whether to omit managed fields in the audit", "annotation", annotationKey)
+		return false
+	}
+
+	return omitManagedFields
 }
 
 // Check whether the rule matches the request attrs.
@@ -206,10 +238,15 @@ func hasString(slice []string, value string) bool {
 }
 
 type fakePolicyRuleEvaluator struct {
-	level audit.Level
-	stage []audit.Stage
+	level               audit.Level
+	stage               []audit.Stage
+	isOmitManagedFields bool
 }
 
 func (f *fakePolicyRuleEvaluator) LevelAndStages(_ authorizer.Attributes) (audit.Level, []audit.Stage) {
 	return f.level, f.stage
+}
+
+func (f *fakePolicyRuleEvaluator) IsOmitManagedFieldsEnabled() bool {
+	return f.isOmitManagedFields
 }

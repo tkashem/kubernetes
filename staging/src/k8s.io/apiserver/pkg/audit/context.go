@@ -28,6 +28,10 @@ type key int
 const (
 	// auditAnnotationsKey is the context key for the audit annotations.
 	auditAnnotationsKey key = iota
+
+	// auditPolicyRuleEvaluatorKey is the context key for
+	// the audit policy rule evaluator.
+	auditPolicyRuleEvaluatorKey
 )
 
 // annotations = *[]annotation instead of a map to preserve order of insertions
@@ -81,4 +85,16 @@ func auditAnnotationsFrom(ctx context.Context) []annotation {
 	}
 
 	return *annotations
+}
+
+// WithAuditPolicyRuleEvaluator sets the audit policy rule evaluator interface for a given request.
+func WithAuditPolicyRuleEvaluator(parent context.Context, evaluator PolicyRuleEvaluator) context.Context {
+	return genericapirequest.WithValue(parent, auditPolicyRuleEvaluatorKey, evaluator)
+}
+
+// AuditPolicyRuleEvaluatorFrom returns the instance of the audit policy rule
+// evaluator interface from the given context.
+func AuditPolicyRuleEvaluatorFrom(ctx context.Context) (PolicyRuleEvaluator, bool) {
+	evaluator, ok := ctx.Value(auditPolicyRuleEvaluatorKey).(PolicyRuleEvaluator)
+	return evaluator, ok
 }

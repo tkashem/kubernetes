@@ -141,6 +141,7 @@ func createAuditEventAndAttachToContext(req *http.Request, policy audit.PolicyRu
 	}
 
 	req = req.WithContext(request.WithAuditEvent(ctx, ev))
+	req = req.WithContext(audit.WithAuditPolicyRuleEvaluator(req.Context(), policy))
 
 	return req, ev, omitStages, nil
 }

@@ -25,4 +25,9 @@ import (
 type PolicyRuleEvaluator interface {
 	// Check the audit level for a request with the given authorizer attributes.
 	LevelAndStages(authorizer.Attributes) (audit.Level, []audit.Stage)
+
+	// IsOmitManagedFieldsEnabled returns true if the given policy has a rule to
+	// discard the managed fields from the request and response bodies,
+	// otherwise it returns false.
+	IsOmitManagedFieldsEnabled() bool
 }

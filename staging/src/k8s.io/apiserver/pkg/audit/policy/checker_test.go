@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/apis/audit"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
@@ -343,5 +344,77 @@ func TestUnionStages(t *testing.T) {
 			}
 			assert.True(t, ok)
 		}
+	}
+}
+
+func TestIsOmitManagedFieldsEnabled(t *testing.T) {
+	omitManagedFieldsKey := "audit.kubernetes.io/omit-managed-fields"
+
+	tests := []struct {
+		name     string
+		policy   *audit.Policy
+		expected bool
+	}{
+		{
+			name:     "annotation key is not set",
+			policy:   &audit.Policy{},
+			expected: false,
+		},
+		{
+			name: "annotation key is set but value is empty",
+			policy: &audit.Policy{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						omitManagedFieldsKey: "",
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "annotation key is set but value is not a boolean",
+			policy: &audit.Policy{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						omitManagedFieldsKey: "A",
+					},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "annotation key is set and value is set to true",
+			policy: &audit.Policy{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						omitManagedFieldsKey: "true",
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "annotation key is set and value is set to false",
+			policy: &audit.Policy{
+				ObjectMeta: metav1.ObjectMeta{
+					Annotations: map[string]string{
+						omitManagedFieldsKey: "FALSE",
+					},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			evaluator := NewPolicyRuleEvaluator(test.policy)
+
+			enabledGot := evaluator.IsOmitManagedFieldsEnabled()
+
+			if test.expected != enabledGot {
+				t.Errorf("expected %t, but got %t", test.expected, enabledGot)
+			}
+		})
 	}
 }
