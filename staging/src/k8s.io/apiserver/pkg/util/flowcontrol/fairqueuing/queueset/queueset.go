@@ -236,9 +236,10 @@ const (
 // executing at each point where there is a change in that quantity,
 // because the metrics --- and only the metrics --- track that
 // quantity per FlowSchema.
-func (qs *queueSet) StartRequest(ctx context.Context, hashValue uint64, flowDistinguisher, fsName string, descr1, descr2 interface{}, queueNoteFn fq.QueueNoteFn) (fq.Request, bool) {
-	// all request(s) have a width of 1, in keeping with the current behavior
-	width := 1.0
+func (qs *queueSet) StartRequest(ctx context.Context, width float64, hashValue uint64, flowDistinguisher, fsName string, descr1, descr2 interface{}, queueNoteFn fq.QueueNoteFn) (fq.Request, bool) {
+	// TODO: remove the following line once we have "width" handling in place,
+	//  for now all request(s) have a width of 1, in keeping with the current behavior.
+	width = 1
 
 	qs.lockAndSyncTime()
 	defer qs.lock.Unlock()

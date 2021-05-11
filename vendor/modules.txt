@@ -1489,6 +1489,7 @@ k8s.io/apiserver/pkg/server/options/encryptionconfig
 k8s.io/apiserver/pkg/server/resourceconfig
 k8s.io/apiserver/pkg/server/routes
 k8s.io/apiserver/pkg/server/storage
+k8s.io/apiserver/pkg/server/width
 k8s.io/apiserver/pkg/storage
 k8s.io/apiserver/pkg/storage/cacher
 k8s.io/apiserver/pkg/storage/errors

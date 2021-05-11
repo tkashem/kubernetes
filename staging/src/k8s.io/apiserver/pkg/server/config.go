@@ -64,6 +64,7 @@ import (
 	"k8s.io/apiserver/pkg/storageversion"
 	"k8s.io/apiserver/pkg/util/feature"
 	utilflowcontrol "k8s.io/apiserver/pkg/util/flowcontrol"
+	"k8s.io/apiserver/pkg/util/flowcontrol/request/width"
 	"k8s.io/client-go/informers"
 	restclient "k8s.io/client-go/rest"
 	"k8s.io/component-base/logs"
@@ -233,6 +234,9 @@ type Config struct {
 
 	// StorageVersionManager holds the storage versions of the API resources installed by this server.
 	StorageVersionManager storageversion.Manager
+
+	// RequestWidthEstimator is used to estimate the "width" of the incoming request(s).
+	RequestWidthEstimator width.RequestWidthEstimatorFunc
 }
 
 type RecommendedConfig struct {
@@ -340,6 +344,7 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 		LongRunningFunc:       genericfilters.BasicLongRunningRequestCheck(sets.NewString("watch"), sets.NewString()),
 		APIServerID:           id,
 		StorageVersionManager: storageversion.NewDefaultManager(),
+		RequestWidthEstimator: width.NewRequestWidthEstimator(),
 	}
 }
 
@@ -728,7 +733,7 @@ func DefaultBuildHandlerChain(apiHandler http.Handler, c *Config) http.Handler {
 
 	if c.FlowControl != nil {
 		handler = filterlatency.TrackCompleted(handler)
-		handler = genericfilters.WithPriorityAndFairness(handler, c.LongRunningFunc, c.FlowControl)
+		handler = genericfilters.WithPriorityAndFairness(handler, c.LongRunningFunc, c.FlowControl, c.RequestWidthEstimator)
 		handler = filterlatency.TrackStarted(handler, "priorityandfairness")
 	} else {
 		handler = genericfilters.WithMaxInFlightLimit(handler, c.MaxRequestsInFlight, c.MaxMutatingRequestsInFlight, c.LongRunningFunc)
