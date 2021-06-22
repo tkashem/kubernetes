@@ -319,6 +319,8 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 	if feature.DefaultFeatureGate.Enabled(features.APIServerIdentity) {
 		id = "kube-apiserver-" + uuid.New().String()
 	}
+	storageObjectCountTracker := flowcontrolrequest.NewStorageObjectCountTracker()
+
 	return &Config{
 		Serializer:                  codecs,
 		BuildHandlerChainFunc:       DefaultBuildHandlerChain,
@@ -357,9 +359,9 @@ func NewConfig(codecs serializer.CodecFactory) *Config {
 		// Default to treating watch as a long-running operation
 		// Generic API servers have no inherent long-running subresources
 		LongRunningFunc:           genericfilters.BasicLongRunningRequestCheck(sets.NewString("watch"), sets.NewString()),
-		RequestWidthEstimator:     flowcontrolrequest.DefaultWidthEstimator,
+		RequestWidthEstimator:     flowcontrolrequest.NewWidthEstimator(storageObjectCountTracker.Get),
 		lifecycleSignals:          newLifecycleSignals(),
-		StorageObjectCountTracker: flowcontrolrequest.NewStorageObjectCountTracker(),
+		StorageObjectCountTracker: storageObjectCountTracker,
 
 		APIServerID:           id,
 		StorageVersionManager: storageversion.NewDefaultManager(),
