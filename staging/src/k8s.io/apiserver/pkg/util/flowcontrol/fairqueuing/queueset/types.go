@@ -69,6 +69,9 @@ type request struct {
 	// Removes this request from its queue. If the request is not put into a
 	// a queue it will be nil.
 	removeFromQueueFn removeFromFIFOFunc
+
+	// set to true after the request handler has been executed
+	executed bool
 }
 
 // queue is an array of requests with additional metadata required for

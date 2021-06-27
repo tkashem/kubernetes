@@ -307,7 +307,7 @@ func (qs *queueSet) StartRequest(ctx context.Context, width fqrequest.Width, has
 			// BTW, the count only needs to be accurate in a test that
 			// uses FakeEventClock::Run().
 			klog.V(6).Infof("QS(%s): Context of request %q %#+v %#+v is Done", configName, fsName, descr1, descr2)
-			qs.cancelWait(req)
+			qs.cancelWaitWithAdditionalLatency(req)
 			qs.goroutineDoneOrBlocked()
 		}()
 	}
@@ -332,6 +332,7 @@ func (req *request) Finish(execFn func()) bool {
 	}
 	func() {
 		defer func() {
+			req.executed = true
 			idle = req.qs.finishRequestAndDispatchAsMuchAsPossible(req)
 		}()
 
@@ -641,11 +642,22 @@ func (qs *queueSet) dispatchLocked() bool {
 	return ok
 }
 
-// cancelWait ensures the request is not waiting.  This is only
+// cancelWaitWithAdditionalLatency ensures the request is not waiting.  This is only
 // applicable to a request that has been assigned to a queue.
-func (qs *queueSet) cancelWait(req *request) {
+func (qs *queueSet) cancelWaitWithAdditionalLatency(req *request) {
 	qs.lock.Lock()
 	defer qs.lock.Unlock()
+	if req.executed {
+		// The request has already been executed
+		if req.width.AdditionalLatency > 0 {
+			time.Sleep(req.width.AdditionalLatency)
+			qs.totSeatsInUse -= req.Seats()
+			metrics.AddRequestConcurrencyInUse(qs.qCfg.Name, req.fsName, -req.Seats())
+			if req.queue != nil {
+				req.queue.seatsInUse -= req.Seats()
+			}
+		}
+	}
 	if req.decision.IsSetLocked() {
 		// The request has already been removed from the queue
 		// and so we consider its wait to be over.
@@ -782,10 +794,20 @@ func (qs *queueSet) finishRequestAndDispatchAsMuchAsPossible(req *request) bool 
 func (qs *queueSet) finishRequestLocked(r *request) {
 	now := qs.clock.Now()
 	qs.totRequestsExecuting--
-	qs.totSeatsInUse -= r.Seats()
 	metrics.AddRequestsExecuting(r.ctx, qs.qCfg.Name, r.fsName, -1)
-	metrics.AddRequestConcurrencyInUse(qs.qCfg.Name, r.fsName, -r.Seats())
 	qs.obsPair.RequestsExecuting.Add(-1)
+
+	defer func() {
+		// if the request has additional latency then we need to wait
+		// before we free up the these seats
+		if r.width.AdditionalLatency <= 0 {
+			qs.totSeatsInUse -= r.Seats()
+			metrics.AddRequestConcurrencyInUse(qs.qCfg.Name, r.fsName, -r.Seats())
+			if r.queue != nil {
+				r.queue.seatsInUse -= r.Seats()
+			}
+		}
+	}()
 
 	if r.queue == nil {
 		if klog.V(6).Enabled() {
@@ -802,7 +824,6 @@ func (qs *queueSet) finishRequestLocked(r *request) {
 
 	// request has finished, remove from requests executing
 	r.queue.requestsExecuting--
-	r.queue.seatsInUse -= r.Seats()
 
 	if klog.V(6).Enabled() {
 		klog.Infof("QS(%s) at r=%s v=%.9fs: request %#+v %#+v finished, adjusted queue %d virtual start time to %.9fs due to service time %.9fs, queue will have %d waiting & %d executing",
