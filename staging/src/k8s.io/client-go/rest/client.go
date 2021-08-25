@@ -100,6 +100,8 @@ type RESTClient struct {
 
 	// Set specific behavior of the client.  If not set http.DefaultClient will be used.
 	Client *http.Client
+
+	RejectIfNotReady bool
 }
 
 // NewRESTClient creates a new RESTClient. This client performs generic REST functions

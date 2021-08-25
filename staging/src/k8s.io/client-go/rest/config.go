@@ -141,6 +141,8 @@ type Config struct {
 	// socks5 proxying does not currently support spdy streaming endpoints.
 	Proxy func(*http.Request) (*url.URL, error)
 
+	RejectIfNotReady bool
+
 	// Version forces a specific version to be used (if registered)
 	// Do we need this?
 	// Version string
@@ -359,6 +361,9 @@ func RESTClientFor(config *Config) (*RESTClient, error) {
 	if err == nil && config.WarningHandler != nil {
 		restClient.warningHandler = config.WarningHandler
 	}
+
+	restClient.RejectIfNotReady = config.RejectIfNotReady
+
 	return restClient, err
 }
 

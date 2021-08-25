@@ -152,6 +152,11 @@ func NewRequest(c *RESTClient) *Request {
 	case len(c.content.ContentType) > 0:
 		r.SetHeader("Accept", c.content.ContentType+", */*")
 	}
+
+	if c.RejectIfNotReady {
+		r.SetHeader("Reject-If-Not-Ready", "")
+	}
+
 	return r
 }
 
