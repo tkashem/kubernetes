@@ -18,6 +18,7 @@ package audit
 
 import (
 	"context"
+	"errors"
 
 	auditinternal "k8s.io/apiserver/pkg/apis/audit"
 	genericapirequest "k8s.io/apiserver/pkg/endpoints/request"
@@ -27,36 +28,64 @@ import (
 type key int
 
 const (
-	// auditAnnotationsKey is the context key for the audit annotations.
-	// TODO: it's wasteful to store the audit annotations under a separate key, we
-	//  copy the request context twice for audit purposes. We should move the audit
-	//  annotations under AuditContext so we can get rid of the additional request
-	//  context copy.
-	auditAnnotationsKey key = iota
-
 	// auditKey is the context key for storing the audit event that is being
 	// captured and the evaluated policy that applies to the given request.
-	auditKey
+	auditKey = iota
 )
 
-// annotations = *[]annotation instead of a map to preserve order of insertions
-type annotation struct {
-	key, value string
+var (
+	NoAuditInContextErr = errors.New("no audit object found in context, handler chain must be wrong")
+)
+
+// AuditContext is a pair of the audit configuration object that applies to
+// a given request and the audit Event object that is being captured.
+// It's a convenient placeholder to store both these objects in the request context.
+type AuditContext struct {
+	// RequestAuditConfig is the audit configuration that applies to the request
+	RequestAuditConfig RequestAuditConfig
+
+	// This allows layers that run before WithAudit (such as authentication)
+	// to insert annotations for a request.
+	accessor EventAccessor
 }
 
-// WithAuditAnnotations returns a new context that can store audit annotations
-// via the AddAuditAnnotation function.  This function is meant to be called from
-// an early request handler to allow all later layers to set audit annotations.
-// This is required to support flows where handlers that come before WithAudit
-// (such as WithAuthentication) wish to set audit annotations.
-func WithAuditAnnotations(parent context.Context) context.Context {
-	// this should never really happen, but prevent double registration of this slice
-	if _, ok := parent.Value(auditAnnotationsKey).(*[]annotation); ok {
+// WithAuditInitialized initializes the request context with an
+// AuditContext instance during audit initialization.
+func WithAuditInitialized(parent context.Context) context.Context {
+	// this should never really happen, but prevent double registration
+	if _, ok := parent.Value(auditKey).(*AuditContext); ok {
 		return parent
 	}
 
-	var annotations []annotation // avoid allocations until we actually need it
-	return genericapirequest.WithValue(parent, auditAnnotationsKey, &annotations)
+	// we don't know whether the request is being audited yet, so we need to provide
+	// a mechanism to store the audit annotations that will be written.
+	ac := &AuditContext{
+		accessor: &eventAccessor{},
+	}
+
+	return genericapirequest.WithValue(parent, auditKey, ac)
+}
+
+// SetAuditEventAndConfig makes two following associations:
+// - the audit configuration object applicable to this request is attached
+//   to the request context
+// - the associated audit Event object that will be written to the audit log
+//   is attached to the request context.
+//
+// This function also ensures that the temporary annotations added so far
+// are moved to the audit Event object.
+//
+// ev should not be nil, this function should be called when a request is
+// being audited and with a non-nil audit Event object.
+func SetAuditEventAndConfig(ctx context.Context, ev *auditinternal.Event, config RequestAuditConfig) error {
+	auditCtx := AuditContextFrom(ctx)
+	if auditCtx == nil || auditCtx.accessor == nil {
+		return NoAuditInContextErr
+	}
+
+	auditCtx.RequestAuditConfig = config
+	auditCtx.accessor.SetAuditEvent(ev)
+	return nil
 }
 
 // AddAuditAnnotation sets the audit annotation for the given key, value pair.
@@ -68,41 +97,22 @@ func WithAuditAnnotations(parent context.Context) context.Context {
 // prefer AddAuditAnnotation over LogAnnotation to avoid dropping annotations.
 func AddAuditAnnotation(ctx context.Context, key, value string) {
 	// use the audit event directly if we have it
-	if ae := AuditEventFrom(ctx); ae != nil {
-		LogAnnotation(ae, key, value)
-		return
+	if ac := AuditContextFrom(ctx); ac != nil {
+		ac.accessor.AddAnnotation(key, value)
 	}
-
-	annotations, ok := ctx.Value(auditAnnotationsKey).(*[]annotation)
-	if !ok {
-		return // adding audit annotation is not supported at this call site
-	}
-
-	*annotations = append(*annotations, annotation{key: key, value: value})
 }
 
-// This is private to prevent reads/write to the slice from outside of this package.
-// The audit event should be directly read to get access to the annotations.
-func auditAnnotationsFrom(ctx context.Context) []annotation {
-	annotations, ok := ctx.Value(auditAnnotationsKey).(*[]annotation)
-	if !ok {
-		return nil // adding audit annotation is not supported at this call site
+func CopyAnnotations(ctx context.Context) map[string]string {
+	if ac := AuditContextFrom(ctx); ac != nil {
+		return ac.accessor.CopyAnnotations()
 	}
-
-	return *annotations
-}
-
-// WithAuditContext returns a new context that stores the pair of the audit
-// configuration object that applies to the given request and
-// the audit event that is going to be written to the API audit log.
-func WithAuditContext(parent context.Context, ev *AuditContext) context.Context {
-	return genericapirequest.WithValue(parent, auditKey, ev)
+	return nil
 }
 
 // AuditEventFrom returns the audit event struct on the ctx
 func AuditEventFrom(ctx context.Context) *auditinternal.Event {
-	if o := AuditContextFrom(ctx); o != nil {
-		return o.Event
+	if ac := AuditContextFrom(ctx); ac != nil {
+		return ac.accessor.GetAuditEvent()
 	}
 	return nil
 }

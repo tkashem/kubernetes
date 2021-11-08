@@ -306,17 +306,19 @@ func TestCachedAuditAnnotations(t *testing.T) {
 				ctx := context.Background()
 
 				if randomChoice {
-					ctx = audit.WithAuditAnnotations(ctx)
+					// no audit event object in request context
+					ctx = audit.WithAuditInitialized(ctx)
 				} else {
-					ctx = audit.WithAuditContext(ctx, &audit.AuditContext{
-						Event: &auditinternal.Event{Level: auditinternal.LevelMetadata},
-					})
+					ctx = audit.WithAuditInitialized(ctx)
+					if err := audit.SetAuditEventAndConfig(ctx, &auditinternal.Event{Level: auditinternal.LevelMetadata}, audit.RequestAuditConfig{}); err != nil {
+						t.Errorf("unexpected test setup error: %v", err)
+					}
 				}
 
 				_, _, _ = a.AuthenticateToken(ctx, "token")
 
 				if randomChoice {
-					allAnnotations <- extractAnnotations(ctx)
+					allAnnotations <- audit.CopyAnnotations(ctx)
 				} else {
 					allAnnotations <- audit.AuditEventFrom(ctx).Annotations
 				}
@@ -354,9 +356,9 @@ func TestCachedAuditAnnotations(t *testing.T) {
 		allAnnotations := make([]map[string]string, 0, 10)
 
 		for i := 0; i < cap(allAnnotations); i++ {
-			ctx := audit.WithAuditAnnotations(context.Background())
+			ctx := audit.WithAuditInitialized(context.Background())
 			_, _, _ = a.AuthenticateToken(ctx, "token")
-			allAnnotations = append(allAnnotations, extractAnnotations(ctx))
+			allAnnotations = append(allAnnotations, audit.CopyAnnotations(ctx))
 		}
 
 		if len(allAnnotations) != cap(allAnnotations) {
@@ -381,16 +383,16 @@ func TestCachedAuditAnnotations(t *testing.T) {
 			return snorlax, true, nil
 		}), false, time.Minute, 0)
 
-		ctx1 := audit.WithAuditAnnotations(context.Background())
+		ctx1 := audit.WithAuditInitialized(context.Background())
 		_, _, _ = a.AuthenticateToken(ctx1, "token1")
-		annotations1 := extractAnnotations(ctx1)
+		annotations1 := audit.CopyAnnotations(ctx1)
 
 		// guarantee different now times
 		time.Sleep(time.Second)
 
-		ctx2 := audit.WithAuditAnnotations(context.Background())
+		ctx2 := audit.WithAuditInitialized(context.Background())
 		_, _, _ = a.AuthenticateToken(ctx2, "token2")
-		annotations2 := extractAnnotations(ctx2)
+		annotations2 := audit.CopyAnnotations(ctx2)
 
 		if ok := len(annotations1) == 1 && len(annotations1["timestamp"]) > 0; !ok {
 			t.Errorf("invalid annotations 1: %v", annotations1)

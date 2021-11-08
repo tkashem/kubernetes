@@ -303,7 +303,7 @@ func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
 
 	h := DefaultBuildHandlerChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// confirm this is a no-op
-		if r.Context() != audit.WithAuditAnnotations(r.Context()) {
+		if r.Context() != audit.WithAuditInitialized(r.Context()) {
 			t.Error("unexpected double wrapping of context")
 		}
 
@@ -312,9 +312,6 @@ func TestAuthenticationAuditAnnotationsDefaultChain(t *testing.T) {
 		if ae == nil {
 			t.Error("unexpected nil audit event")
 		}
-
-		// confirm that the direct way of setting audit annotations later in the chain works as expected
-		audit.LogAnnotation(ae, "snorlax", "is cool too")
 
 		// confirm that the indirect way of setting audit annotations later in the chain also works
 		audit.AddAuditAnnotation(r.Context(), "dogs", "are okay")

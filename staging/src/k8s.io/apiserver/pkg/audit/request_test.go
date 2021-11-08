@@ -36,12 +36,12 @@ func TestLogAnnotation(t *testing.T) {
 		Level:   auditinternal.LevelMetadata,
 		AuditID: "fake id",
 	}
-	LogAnnotation(ev, "foo", "bar")
-	LogAnnotation(ev, "foo", "baz")
+	logAnnotation(ev, "foo", "bar")
+	logAnnotation(ev, "foo", "baz")
 	assert.Equal(t, "bar", ev.Annotations["foo"], "audit annotation should not be overwritten.")
 
-	LogAnnotation(ev, "qux", "")
-	LogAnnotation(ev, "qux", "baz")
+	logAnnotation(ev, "qux", "")
+	logAnnotation(ev, "qux", "baz")
 	assert.Equal(t, "", ev.Annotations["qux"], "audit annotation should not be overwritten.")
 }
 

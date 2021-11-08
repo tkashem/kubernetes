@@ -87,10 +87,6 @@ func NewEventFromRequest(req *http.Request, requestReceivedTimestamp time.Time, 
 		}
 	}
 
-	for _, kv := range auditAnnotationsFrom(req.Context()) {
-		LogAnnotation(ev, kv.key, kv.value)
-	}
-
 	return ev, nil
 }
 
@@ -243,8 +239,9 @@ func encodeObject(obj runtime.Object, gv schema.GroupVersion, serializer runtime
 	}, nil
 }
 
-// LogAnnotation fills in the Annotations according to the key value pair.
-func LogAnnotation(ae *auditinternal.Event, key, value string) {
+// logAnnotation fills in the Annotations according to the key value pair.
+// it is used internally
+func logAnnotation(ae *auditinternal.Event, key, value string) {
 	if ae == nil || ae.Level.Less(auditinternal.LevelMetadata) {
 		return
 	}

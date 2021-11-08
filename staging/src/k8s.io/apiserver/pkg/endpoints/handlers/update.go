@@ -135,9 +135,8 @@ func UpdateResource(r rest.Updater, scope *RequestScope, admit admission.Interfa
 		}
 		trace.Step("Conversion done")
 
-		ae := audit.AuditEventFrom(ctx)
 		audit.LogRequestObject(req.Context(), obj, objGV, scope.Resource, scope.Subresource, scope.Serializer)
-		admit = admission.WithAudit(admit, ae)
+		admit = admission.WithAudit(admit)
 
 		if err := checkName(obj, name, namespace, scope.Namer); err != nil {
 			scope.err(err, w, req)

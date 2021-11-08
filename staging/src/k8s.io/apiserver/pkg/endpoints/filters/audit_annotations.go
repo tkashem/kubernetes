@@ -22,17 +22,18 @@ import (
 	"k8s.io/apiserver/pkg/audit"
 )
 
-// WithAuditAnnotations decorates a http.Handler with a []{key, value} that is merged
+// WithAuditContext decorates a http.Handler with a []{key, value} that is merged
 // with the audit.Event.Annotations map.  This allows layers that run before WithAudit
 // (such as authentication) to assert annotations.
 // If sink or audit policy is nil, no decoration takes place.
-func WithAuditAnnotations(handler http.Handler, sink audit.Sink, policy audit.PolicyRuleEvaluator) http.Handler {
+func WithAuditContext(handler http.Handler, sink audit.Sink, policy audit.PolicyRuleEvaluator) http.Handler {
 	// no need to wrap if auditing is disabled
 	if sink == nil || policy == nil {
 		return handler
 	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		req = req.WithContext(audit.WithAuditAnnotations(req.Context()))
+		req = req.WithContext(audit.WithAuditInitialized(req.Context()))
 		handler.ServeHTTP(w, req)
 	})
 }

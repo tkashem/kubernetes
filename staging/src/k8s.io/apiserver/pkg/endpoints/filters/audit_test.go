@@ -848,9 +848,8 @@ func withTestContext(req *http.Request, user user.Info, ae *auditinternal.Event)
 		ctx = request.WithUser(ctx, user)
 	}
 	if ae != nil {
-		ctx = audit.WithAuditContext(ctx, &audit.AuditContext{
-			Event: ae,
-		})
+		ctx = audit.WithAuditInitialized(ctx)
+		audit.SetAuditEventAndConfig(ctx, ae, audit.RequestAuditConfig{})
 	}
 	if info, err := newTestRequestInfoResolver().NewRequestInfo(req); err == nil {
 		ctx = request.WithRequestInfo(ctx, info)
