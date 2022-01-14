@@ -106,7 +106,9 @@ func (e *workEstimator) estimate(r *http.Request, flowSchemaName, priorityLevelN
 
 	switch requestInfo.Verb {
 	case "list":
-		return e.listWorkEstimator.EstimateWork(r, flowSchemaName, priorityLevelName)
+		// return e.listWorkEstimator.EstimateWork(r, flowSchemaName, priorityLevelName)
+		// Test to see if this is causing latency spikes
+		return WorkEstimate{InitialSeats: minimumSeats}
 	case "create", "update", "patch", "delete":
 		return e.mutatingWorkEstimator.EstimateWork(r, flowSchemaName, priorityLevelName)
 	}
