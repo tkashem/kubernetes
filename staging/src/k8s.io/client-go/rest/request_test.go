@@ -22,6 +22,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/google/go-cmp/cmp"
 	"io"
 	"io/ioutil"
 	"net"
@@ -2755,6 +2756,34 @@ func TestRequestWatchWithRetry(t *testing.T) {
 	})
 }
 
+func TestRequestDoWithLimiterBackoffAndMetrics(t *testing.T) {
+	// both request.Do and request.DoRaw have the same behavior and expectations
+	testRetryWithLimiterBackoffAndMetrics(t, "Do", func(ctx context.Context, r *Request) {
+		r.DoRaw(ctx)
+	})
+}
+
+func TestRequestStreamWithLimiterBackoffAndMetrics(t *testing.T) {
+	testRetryWithLimiterBackoffAndMetrics(t, "Stream", func(ctx context.Context, r *Request) {
+		r.Stream(ctx)
+	})
+}
+
+func TestRequestWatchWithLimiterBackoffAndMetrics(t *testing.T) {
+	testRetryWithLimiterBackoffAndMetrics(t, "Watch", func(ctx context.Context, r *Request) {
+		w, err := r.Watch(ctx)
+		if err == nil {
+			// in this test the the response body returned by the server is always empty,
+			// this will cause StreamWatcher.receive() to:
+			// - return an io.EOF to indicate that the watch closed normally and
+			// - then close the io.Reader
+			// since we assert on the number of times 'Close' has been called on the
+			// body of the response object, we need to wait here to avoid race condition.
+			<-w.ResultChan()
+		}
+	})
+}
+
 func testRequestWithRetry(t *testing.T, key string, doFunc func(ctx context.Context, r *Request)) {
 	type expected struct {
 		attempts  int
@@ -2909,6 +2938,159 @@ func testRequestWithRetry(t *testing.T, key string, doFunc func(ctx context.Cont
 			}
 			if expected.respCount.closes != respCountGot.getCloseCount() {
 				t.Errorf("Expected response body Close to be invoked %d times, but got: %d", expected.respCount.closes, respCountGot.getCloseCount())
+			}
+		})
+	}
+}
+
+// fake flowcontrol.RateLimiter we use to tap into the Wait method
+// so we can verify it is invoked appropriately.
+type withRateLimiterAndBackoffManager struct {
+	flowcontrol.RateLimiter
+	*NoBackoff
+	sleep int
+	limiterInvoked int
+	order []string
+	sleeps []time.Duration
+}
+
+func (lb *withRateLimiterAndBackoffManager) Wait(ctx context.Context) error {
+	lb.limiterInvoked++
+	lb.order = append(lb.order, "RateLimiter.Wait")
+	return nil
+}
+
+func (lb *withRateLimiterAndBackoffManager) CalculateBackoff(actualUrl *url.URL) time.Duration {
+	lb.order = append(lb.order, "BackoffManager.CalculateBackoff")
+	lb.sleep += 2
+	return time.Duration(lb.sleep)*time.Minute
+}
+
+func (lb *withRateLimiterAndBackoffManager) UpdateBackoff(actualUrl *url.URL, err error, responseCode int) {
+	lb.order = append(lb.order, "BackoffManager.UpdateBackoff")
+}
+
+func (lb *withRateLimiterAndBackoffManager) Sleep(d time.Duration) {
+	lb.order = append(lb.order, "BackoffManager.Sleep")
+	lb.sleeps = append(lb.sleeps, d)
+}
+
+func (lb *withRateLimiterAndBackoffManager) Do() {
+	lb.order = append(lb.order, "client.Do")
+}
+
+func testRetryWithLimiterBackoffAndMetrics(t *testing.T, key string, doFunc func(ctx context.Context, r *Request)) {
+	type expected struct {
+		attempts  int
+		rateLimiterWaitInvoked int
+		order []string
+	}
+
+	expectedOrder := []string{
+		"client.Do", // first attempt for which the server sends a retryable response
+		"BackoffManager.UpdateBackoff", // update Backoff with the (response, error) returned
+		"BackoffManager.Sleep",	// Sleep for N seconds from 'Retry-After: N' response header
+		"BackoffManager.CalculateBackoff", // calculate the exponential backoff delay
+		"BackoffManager.Sleep", // Sleep for exponential backoff delay
+		"RateLimiter.Wait", // wait for client-side rate limiting
+		"client.Do", // retry, and this should succeed
+		"BackoffManager.UpdateBackoff", // update Backoff with the (response, error) returned
+	}
+	expectedSleep := []time.Duration{
+		1*time.Second, // from 'Retry-After: 1' response header
+		2*time.Minute, // from what CalculateBackoff returned
+	}
+
+	tests := []struct {
+		name          string
+		maxRetries    int
+		serverReturns []responseErr
+		// expectations differ based on whether it is 'Watch', 'Stream' or 'Do'
+		expectations map[string]expected
+	}{
+		{
+			name:       "success after one retry",
+			maxRetries: 1,
+			serverReturns: []responseErr{
+				{response: retryAfterResponse(), err: nil},
+				{response: &http.Response{StatusCode: http.StatusOK}, err: nil},
+			},
+			expectations: map[string]expected{
+				"Do": {
+					attempts:  2,
+					rateLimiterWaitInvoked: 2,
+					order: append([]string{"RateLimiter.Wait"}, expectedOrder...),
+				},
+				"Watch": {
+					attempts:  2,
+					rateLimiterWaitInvoked: 1,
+					order: expectedOrder,
+				},
+				"Stream": {
+					attempts:  2,
+					rateLimiterWaitInvoked: 1,
+					order: expectedOrder,
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			limiterBackoff := &withRateLimiterAndBackoffManager{
+				RateLimiter: flowcontrol.NewFakeAlwaysRateLimiter(),
+				NoBackoff: &NoBackoff{},
+			}
+			var attempts int
+			client := clientForFunc(func(req *http.Request) (*http.Response, error) {
+				defer func() {
+					attempts++
+				}()
+
+				limiterBackoff.Do()
+				resp := test.serverReturns[attempts].response
+				if resp != nil {
+					resp.Body = ioutil.NopCloser(bytes.NewReader([]byte{}))
+				}
+				return resp, test.serverReturns[attempts].err
+			})
+
+			base, err := url.Parse("http://foo.bar")
+			if err != nil {
+				t.Fatalf("Wrong test setup - did not find expected for: %s", key)
+			}
+			req := &Request{
+				verb: "GET",
+				body: bytes.NewReader([]byte{}),
+				c: &RESTClient{
+					base: base,
+					content: defaultContentConfig(),
+					Client:  client,
+					rateLimiter: limiterBackoff,
+				},
+				pathPrefix: "/api/v1",
+				rateLimiter: limiterBackoff,
+				backoff: limiterBackoff,
+				retry:   &withRetry{maxRetries: test.maxRetries},
+			}
+
+			doFunc(context.Background(), req)
+
+			expected, ok := test.expectations[key]
+			if !ok {
+				t.Fatalf("Wrong test setup - did not find expected for: %s", key)
+			}
+			if expected.attempts != attempts {
+				t.Errorf("%s: Expected retries: %d, but got: %d", key, expected.attempts, attempts)
+			}
+			if expected.rateLimiterWaitInvoked != limiterBackoff.limiterInvoked {
+				t.Errorf("%s: Expected rate limiter invoked: %d times, but got: %d", key, expected.rateLimiterWaitInvoked, limiterBackoff.limiterInvoked)
+			}
+			if !cmp.Equal(expected.order, limiterBackoff.order) {
+				t.Errorf("%s: Expected order of calls to match, diff: %s", key, cmp.Diff(expected.order, limiterBackoff.order))
+			}
+			if !cmp.Equal(expectedSleep, limiterBackoff.sleeps) {
+				t.Errorf("%s: Expected order of calls to match, diff: %s", key, cmp.Diff(expectedSleep, limiterBackoff.sleeps))
 			}
 		})
 	}

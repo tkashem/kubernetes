@@ -726,7 +726,7 @@ func (r *Request) Watch(ctx context.Context) (watch.Interface, error) {
 			var retry bool
 			retryAfter, retry = r.retry.NextRetry(req, resp, err, isErrRetryableFunc)
 			if retry {
-				err := r.retry.BeforeNextRetry(ctx, r.backoff, retryAfter, url, r.body)
+				err := r.retry.PrepareForNextRetry(ctx, retryAfter, r)
 				if err == nil {
 					return false, nil
 				}
@@ -816,7 +816,6 @@ func (r *Request) Stream(ctx context.Context) (io.ReadCloser, error) {
 		client = http.DefaultClient
 	}
 
-	var retryAfter *RetryAfter
 	url := r.URL().String()
 	for {
 		req, err := r.newHTTPRequest(ctx)
@@ -827,26 +826,8 @@ func (r *Request) Stream(ctx context.Context) (io.ReadCloser, error) {
 			req.Body = ioutil.NopCloser(r.body)
 		}
 
-		r.backoff.Sleep(r.backoff.CalculateBackoff(r.URL()))
-		if retryAfter != nil {
-			// We are retrying the request that we already send to apiserver
-			// at least once before.
-			// This request should also be throttled with the client-internal rate limiter.
-			if err := r.tryThrottleWithInfo(ctx, retryAfter.Reason); err != nil {
-				return nil, err
-			}
-			retryAfter = nil
-		}
-
 		resp, err := client.Do(req)
-		updateURLMetrics(ctx, r, resp, err)
-		if r.c.base != nil {
-			if err != nil {
-				r.backoff.UpdateBackoff(r.URL(), err, 0)
-			} else {
-				r.backoff.UpdateBackoff(r.URL(), err, resp.StatusCode)
-			}
-		}
+		r.retry.PostRetry(ctx, r, resp, err)
 		if err != nil {
 			// we only retry on an HTTP response with 'Retry-After' header
 			return nil, err
@@ -861,10 +842,9 @@ func (r *Request) Stream(ctx context.Context) (io.ReadCloser, error) {
 			done, transformErr := func() (bool, error) {
 				defer resp.Body.Close()
 
-				var retry bool
-				retryAfter, retry = r.retry.NextRetry(req, resp, err, neverRetryError)
+				retryAfter, retry := r.retry.NextRetry(req, resp, err, neverRetryError)
 				if retry {
-					err := r.retry.BeforeNextRetry(ctx, r.backoff, retryAfter, url, r.body)
+					err := r.retry.PrepareForNextRetry(ctx, retryAfter, r)
 					if err == nil {
 						return false, nil
 					}
@@ -967,23 +947,8 @@ func (r *Request) request(ctx context.Context, fn func(*http.Request, *http.Resp
 			return err
 		}
 
-		r.backoff.Sleep(r.backoff.CalculateBackoff(r.URL()))
-		if retryAfter != nil {
-			// We are retrying the request that we already send to apiserver
-			// at least once before.
-			// This request should also be throttled with the client-internal rate limiter.
-			if err := r.tryThrottleWithInfo(ctx, retryAfter.Reason); err != nil {
-				return err
-			}
-			retryAfter = nil
-		}
 		resp, err := client.Do(req)
-		updateURLMetrics(ctx, r, resp, err)
-		if err != nil {
-			r.backoff.UpdateBackoff(r.URL(), err, 0)
-		} else {
-			r.backoff.UpdateBackoff(r.URL(), err, resp.StatusCode)
-		}
+		r.retry.PostRetry(ctx, r, resp, err)
 
 		done := func() bool {
 			defer readAndCloseResponseBody(resp)
@@ -1011,7 +976,7 @@ func (r *Request) request(ctx context.Context, fn func(*http.Request, *http.Resp
 				return false
 			})
 			if retry {
-				err := r.retry.BeforeNextRetry(ctx, r.backoff, retryAfter, req.URL.String(), r.body)
+				err := r.retry.PrepareForNextRetry(ctx, retryAfter, r)
 				if err == nil {
 					return false
 				}
@@ -1022,8 +987,11 @@ func (r *Request) request(ctx context.Context, fn func(*http.Request, *http.Resp
 			return true
 		}()
 		if done {
+			updateURLMetrics(ctx, r, resp, err)
 			return err
 		}
+
+		updateRetryMetrics(ctx, r, resp, err)
 	}
 }
 

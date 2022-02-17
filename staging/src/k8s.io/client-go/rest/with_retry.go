@@ -74,7 +74,7 @@ type WithRetry interface {
 	//    if the err sent by the server is retryable.
 	NextRetry(req *http.Request, resp *http.Response, err error, f IsRetryableErrorFunc) (*RetryAfter, bool)
 
-	// BeforeNextRetry is responsible for carrying out operations that need
+	// PrepareForNextRetry is responsible for carrying out operations that need
 	// to be completed before the next retry is initiated:
 	// - if the request context is already canceled there is no need to
 	//   retry, the function will return ctx.Err().
@@ -84,9 +84,12 @@ type WithRetry interface {
 	// - we should wait the number of seconds the server has asked us to
 	//   in the 'Retry-After' response header.
 	//
-	// If BeforeNextRetry returns an error the client should abort the retry,
-	// otherwise it is safe to initiate the next retry.
-	BeforeNextRetry(ctx context.Context, backoff BackoffManager, retryAfter *RetryAfter, url string, body io.Reader) error
+	// If PrepareForNextRetry returns an error the client should
+	// abort the retry, otherwise it is safe to initiate the next retry.
+	PrepareForNextRetry(ctx context.Context, retryAfter *RetryAfter, r *Request) error
+
+	// PostRetry
+	PostRetry(ctx context.Context, r *Request, resp *http.Response, err error)
 }
 
 // RetryAfter holds information associated with the next retry.
@@ -109,22 +112,26 @@ type withRetry struct {
 	attempts   int
 }
 
-func (r *withRetry) SetMaxRetries(maxRetries int) {
+func (rt *withRetry) SetMaxRetries(maxRetries int) {
 	if maxRetries < 0 {
 		maxRetries = 0
 	}
-	r.maxRetries = maxRetries
+	rt.maxRetries = maxRetries
 }
 
-func (r *withRetry) NextRetry(req *http.Request, resp *http.Response, err error, f IsRetryableErrorFunc) (*RetryAfter, bool) {
+func (rt *withRetry) IsRetry() bool {
+	return rt.attempts == 0
+}
+
+func (rt *withRetry) NextRetry(req *http.Request, resp *http.Response, err error, f IsRetryableErrorFunc) (*RetryAfter, bool) {
 	if req == nil || (resp == nil && err == nil) {
 		// bad input, we do nothing.
 		return nil, false
 	}
 
-	r.attempts++
-	retryAfter := &RetryAfter{Attempt: r.attempts}
-	if r.attempts > r.maxRetries {
+	rt.attempts++
+	retryAfter := &RetryAfter{Attempt: rt.attempts}
+	if rt.attempts > rt.maxRetries {
 		return retryAfter, false
 	}
 
@@ -151,28 +158,54 @@ func (r *withRetry) NextRetry(req *http.Request, resp *http.Response, err error,
 	}
 
 	retryAfter.Wait = time.Duration(seconds) * time.Second
-	retryAfter.Reason = getRetryReason(r.attempts, seconds, resp, err)
+	retryAfter.Reason = getRetryReason(rt.attempts, seconds, resp, err)
 	return retryAfter, true
 }
 
-func (r *withRetry) BeforeNextRetry(ctx context.Context, backoff BackoffManager, retryAfter *RetryAfter, url string, body io.Reader) error {
+func (*withRetry) PrepareForNextRetry(ctx context.Context, retryAfter *RetryAfter, r *Request) error {
 	// Ensure the response body is fully read and closed before
 	// we reconnect, so that we reuse the same TCP connection.
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 
-	if seeker, ok := body.(io.Seeker); ok && body != nil {
+	if seeker, ok := r.body.(io.Seeker); ok && r.body != nil {
 		if _, err := seeker.Seek(0, 0); err != nil {
 			return fmt.Errorf("can't Seek() back to beginning of body for %T", r)
 		}
 	}
 
-	klog.V(4).Infof("Got a Retry-After %s response for attempt %d to %v", retryAfter.Wait, retryAfter.Attempt, url)
-	if backoff != nil {
-		backoff.Sleep(retryAfter.Wait)
+	url := r.URL()
+	klog.V(4).Infof("Got a Retry-After %s response for attempt %d to %v", retryAfter.Wait, retryAfter.Attempt, url.String())
+	if r.backoff != nil {
+		// TODO(tkashem) with default set to use exponential backoff
+		//  the following sleep may not be necessary anymore,
+		//  see https://github.com/kubernetes/kubernetes/pull/106272.
+		r.backoff.Sleep(retryAfter.Wait)
+
+		r.backoff.Sleep(r.backoff.CalculateBackoff(url))
 	}
+
+	// We are retrying the request that we already send to
+	// apiserver at least once before. This request should
+	// also be throttled with the client-internal rate limiter.
+	if err := r.tryThrottleWithInfo(ctx, retryAfter.Reason); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (*withRetry) PostRetry(ctx context.Context, r *Request, resp *http.Response, err error) {
+	updateURLMetrics(ctx, r, resp, err)
+
+	if r.c.base != nil {
+		if err != nil {
+			r.backoff.UpdateBackoff(r.URL(), err, 0)
+		} else {
+			r.backoff.UpdateBackoff(r.URL(), err, resp.StatusCode)
+		}
+	}
 }
 
 // checkWait returns true along with a number of seconds if
