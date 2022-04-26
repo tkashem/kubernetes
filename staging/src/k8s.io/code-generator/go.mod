@@ -29,7 +29,4 @@ require (
 	sigs.k8s.io/structured-merge-diff/v4 v4.2.1 // indirect
 )
 
-replace (
-	github.com/onsi/ginkgo => github.com/openshift/ginkgo v4.7.0-origin.0+incompatible
-	k8s.io/code-generator => ../code-generator
-)
+replace github.com/onsi/ginkgo => github.com/openshift/ginkgo v4.7.0-origin.0+incompatible
