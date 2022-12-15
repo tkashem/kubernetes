@@ -1,6 +1,7 @@
 package openshiftkubeapiserver
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	clientgoinformers "k8s.io/client-go/informers"
 	corev1informers "k8s.io/client-go/informers/core/v1"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/kubernetes/openshift-kube-apiserver/admission/authorization/restrictusers"
@@ -85,6 +87,20 @@ func OpenShiftKubeAPIServerConfigPatch(genericConfig *genericapiserver.Config, k
 	enablement.SCCAdmissionPlugin.SetSecurityInformers(openshiftInformers.getOpenshiftSecurityInformers().Security().V1().SecurityContextConstraints())
 	enablement.SCCAdmissionPlugin.SetExternalKubeInformerFactory(kubeInformers)
 	// END ADMISSION
+
+	// Initialize the SCC exec admission validator, so it can be reused
+	// from within Pod "exec" and "attach" subresource registry code.
+	clientset, err := kubernetes.NewForConfig(genericConfig.LoopbackClientConfig)
+	if err != nil {
+		return err
+	}
+	enablement.SCCExecAdmissionValidator.SetExternalKubeClientSet(clientset)
+	enablement.SCCExecAdmissionValidator.SetAuthorizer(genericConfig.Authorization.Authorizer)
+	enablement.SCCExecAdmissionValidator.SetSecurityInformers(openshiftInformers.getOpenshiftSecurityInformers().Security().V1().SecurityContextConstraints())
+	enablement.SCCExecAdmissionValidator.SetExternalKubeInformerFactory(kubeInformers)
+	if err := enablement.SCCExecAdmissionValidator.ValidateInitialization(); err != nil {
+		return fmt.Errorf("ValidateInitialization for SCC exec admission validator failed - %v", err)
+	}
 
 	// HANDLER CHAIN (with oauth server and web console)
 	deprecatedAPIClient, err := apiclientv1.NewForConfig(makeJSONRESTConfig(genericConfig.LoopbackClientConfig))

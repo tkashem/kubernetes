@@ -109,6 +109,10 @@ func (r *AttachREST) Connect(ctx context.Context, name string, opts runtime.Obje
 	if !ok {
 		return nil, fmt.Errorf("Invalid options object: %#v", opts)
 	}
+
+	// openshift patch: invoke scc-exec plugin
+	ValidateUsingSCCExecPlugin(ctx, name, attachOpts, "attach")
+
 	location, transport, err := pod.AttachLocation(ctx, r.Store, r.KubeletConn, name, attachOpts)
 	if err != nil {
 		return nil, err
@@ -152,6 +156,10 @@ func (r *ExecREST) Connect(ctx context.Context, name string, opts runtime.Object
 	if !ok {
 		return nil, fmt.Errorf("invalid options object: %#v", opts)
 	}
+
+	// openshift patch: invoke scc-exec plugin
+	ValidateUsingSCCExecPlugin(ctx, name, execOpts, "exec")
+
 	location, transport, err := pod.ExecLocation(ctx, r.Store, r.KubeletConn, name, execOpts)
 	if err != nil {
 		return nil, err

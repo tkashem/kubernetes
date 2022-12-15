@@ -88,4 +88,7 @@ func ForceGlobalInitializationForOpenShift() {
 	server.SkipSystemMastersAuthorizer()
 }
 
-var SCCAdmissionPlugin = sccadmission.NewConstraint()
+var (
+	SCCAdmissionPlugin        = sccadmission.NewConstraint()
+	SCCExecAdmissionValidator = sccadmission.NewSCCExecRestrictions()
+)
