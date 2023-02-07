@@ -375,17 +375,6 @@ func (s *GenericAPIServer) PrepareRun() preparedGenericAPIServer {
 	}
 	s.installReadyz()
 
-	// Register audit backend preShutdownHook.
-	if s.AuditBackend != nil {
-		err := s.AddPreShutdownHook("audit-backend", func() error {
-			s.AuditBackend.Shutdown()
-			return nil
-		})
-		if err != nil {
-			klog.Errorf("Failed to add pre-shutdown hook for audit-backend %s", err)
-		}
-	}
-
 	return preparedGenericAPIServer{s}
 }
 
@@ -487,6 +476,12 @@ func (s preparedGenericAPIServer) Run(stopCh <-chan struct{}) error {
 		return err
 	}
 	klog.V(1).Info("[graceful-termination] RunPreShutdownHooks has completed")
+
+	// Register audit backend preShutdownHook.
+	if s.AuditBackend != nil {
+		s.AuditBackend.Shutdown()
+		klog.V(1).InfoS("[graceful-termination] audit backend shutdown completed")
+	}
 
 	// Wait for all requests in flight to drain, bounded by the RequestTimeout variable.
 	<-drainedCh.Signaled()

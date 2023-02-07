@@ -33,9 +33,12 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
+	auditv1 "k8s.io/apiserver/pkg/apis/audit/v1"
 	genericapifilters "k8s.io/apiserver/pkg/endpoints/filters"
 	"k8s.io/apiserver/pkg/server/dynamiccertificates"
 	genericfilters "k8s.io/apiserver/pkg/server/filters"
+	auditbuffered "k8s.io/apiserver/plugin/pkg/audit/buffered"
+	auditlog "k8s.io/apiserver/plugin/pkg/audit/log"
 	"k8s.io/klog/v2"
 
 	"github.com/google/go-cmp/cmp"
@@ -118,7 +121,7 @@ func newStep(fn func()) *step {
 }
 
 func TestGracefulTerminationWithKeepListeningDuringGracefulTerminationDisabled(t *testing.T) {
-	s := newGenericAPIServer(t, false)
+	s := newGenericAPIServer(t, false, false)
 
 	// record the termination events in the order they are signaled
 	var signalOrderLock sync.Mutex
@@ -240,7 +243,7 @@ func TestGracefulTerminationWithKeepListeningDuringGracefulTerminationDisabled(t
 }
 
 func TestGracefulTerminationWithKeepListeningDuringGracefulTerminationEnabled(t *testing.T) {
-	s := newGenericAPIServer(t, true)
+	s := newGenericAPIServer(t, true, true)
 
 	// record the termination events in the order they are signaled
 	var signalOrderLock sync.Mutex
@@ -360,7 +363,7 @@ func TestGracefulTerminationWithKeepListeningDuringGracefulTerminationEnabled(t 
 	httpServerStoppedListeningCh := s.lifecycleSignals.HTTPServerStoppedListening
 	select {
 	case <-httpServerStoppedListeningCh.Signaled():
-	case <-time.After(5 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("Expected the server to signal HTTPServerStoppedListening event")
 	}
 
@@ -390,7 +393,7 @@ func TestMuxAndDiscoveryComplete(t *testing.T) {
 	// setup
 	testSignal1 := make(chan struct{})
 	testSignal2 := make(chan struct{})
-	s := newGenericAPIServer(t, true)
+	s := newGenericAPIServer(t, true, false)
 	s.muxAndDiscoveryCompleteSignals["TestSignal1"] = testSignal1
 	s.muxAndDiscoveryCompleteSignals["TestSignal2"] = testSignal2
 	doer := setupDoer(t, s.SecureServingInfo)
@@ -429,7 +432,7 @@ func TestMuxAndDiscoveryComplete(t *testing.T) {
 }
 
 func TestPreShutdownHooks(t *testing.T) {
-	s := newGenericAPIServer(t, true)
+	s := newGenericAPIServer(t, true, false)
 	doer := setupDoer(t, s.SecureServingInfo)
 
 	preShutdownHookErrCh := make(chan error)
@@ -617,7 +620,7 @@ func newClient(useNewConnection bool) *http.Client {
 	}
 }
 
-func newGenericAPIServer(t *testing.T, keepListening bool) *GenericAPIServer {
+func newGenericAPIServer(t *testing.T, keepListening, enableBufferedAuditLog bool) *GenericAPIServer {
 	config, _ := setUp(t)
 	config.ShutdownDelayDuration = 100 * time.Millisecond
 	config.ShutdownSendRetryAfter = keepListening
@@ -629,6 +632,16 @@ func newGenericAPIServer(t *testing.T, keepListening bool) *GenericAPIServer {
 		handler = genericapifilters.WithRequestInfo(handler, c.RequestInfoResolver)
 		return handler
 	}
+
+	auditLogBackend := auditlog.NewBackend(ioutil.Discard, auditlog.FormatJson, auditv1.SchemeGroupVersion)
+	if enableBufferedAuditLog {
+		auditLogBackend = auditbuffered.NewBackend(auditLogBackend, auditbuffered.BatchConfig{
+			BufferSize:    10000,
+			MaxBatchSize:  400,
+			AsyncDelegate: true,
+		})
+	}
+	config.AuditBackend = auditLogBackend
 
 	s, err := config.Complete(nil).New("test", NewEmptyDelegate())
 	if err != nil {
@@ -671,4 +684,33 @@ func (ln wrappedListener) Accept() (net.Conn, error) {
 		ln.t.Logf("[server] seen new connection: %#v", tc)
 	}
 	return c, err
+}
+
+
+
+
+func TestBufferedAuditBackendShutDown(t *testing.T) {
+	s := newGenericAPIServer(t, true, true)
+	doer := setupDoer(t, s.SecureServingInfo)
+
+	// start the API server
+	stopCh, runCompletedCh := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(runCompletedCh)
+		s.PrepareRun().Run(stopCh)
+	}()
+	waitForAPIServerStarted(t, doer)
+
+	resultGot := doer.Do(newClient(true), shouldUseNewConnection(t), "/echo?message=request-should-succeed", time.Second)
+	assertResponse(t, resultGot, http.StatusOK)
+
+	close(stopCh)
+
+	// wait for the HTTP Server listener to have stopped
+	httpServerStoppedListeningCh := s.lifecycleSignals.HTTPServerStoppedListening
+	select {
+	case <-httpServerStoppedListeningCh.Signaled():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Expected the server to signal HTTPServerStoppedListening event")
+	}
 }
