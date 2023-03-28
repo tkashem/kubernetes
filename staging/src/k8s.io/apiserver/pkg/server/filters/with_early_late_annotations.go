@@ -120,7 +120,7 @@ func withShutdownLateAnnotation(handler http.Handler, shutdownInitiated lifecycl
 		}
 
 		audit.AddAuditAnnotation(req.Context(), "apiserver.k8s.io/shutdown",
-			fmt.Sprintf("%s %s loopback=%t", late, self, isLoopback(req.RemoteAddr)))
+			fmt.Sprintf("%s %s loopback=%t proto=%s", late, self, isLoopback(req.RemoteAddr), req.Proto))
 
 		handler.ServeHTTP(w, req)
 	})
