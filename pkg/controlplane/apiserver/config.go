@@ -200,7 +200,7 @@ func BuildPriorityAndFairness(s controlplaneapiserver.CompletedOptions, extclien
 	}
 	return utilflowcontrol.New(
 		versionedInformer,
-		extclient.FlowcontrolV1beta3(),
+		extclient.FlowcontrolV1(),
 		s.GenericServerRunOptions.MaxRequestsInFlight+s.GenericServerRunOptions.MaxMutatingRequestsInFlight,
 	), nil
 }
