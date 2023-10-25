@@ -487,7 +487,7 @@ func Convert_flowcontrol_LimitResponse_To_v1_LimitResponse(in *flowcontrol.Limit
 }
 
 func autoConvert_v1_LimitedPriorityLevelConfiguration_To_flowcontrol_LimitedPriorityLevelConfiguration(in *v1.LimitedPriorityLevelConfiguration, out *flowcontrol.LimitedPriorityLevelConfiguration, s conversion.Scope) error {
-	out.NominalConcurrencyShares = in.NominalConcurrencyShares
+	out.NominalConcurrencyShares = (*int32)(unsafe.Pointer(in.NominalConcurrencyShares))
 	if err := Convert_v1_LimitResponse_To_flowcontrol_LimitResponse(&in.LimitResponse, &out.LimitResponse, s); err != nil {
 		return err
 	}
@@ -502,7 +502,7 @@ func Convert_v1_LimitedPriorityLevelConfiguration_To_flowcontrol_LimitedPriority
 }
 
 func autoConvert_flowcontrol_LimitedPriorityLevelConfiguration_To_v1_LimitedPriorityLevelConfiguration(in *flowcontrol.LimitedPriorityLevelConfiguration, out *v1.LimitedPriorityLevelConfiguration, s conversion.Scope) error {
-	out.NominalConcurrencyShares = in.NominalConcurrencyShares
+	out.NominalConcurrencyShares = (*int32)(unsafe.Pointer(in.NominalConcurrencyShares))
 	if err := Convert_flowcontrol_LimitResponse_To_v1_LimitResponse(&in.LimitResponse, &out.LimitResponse, s); err != nil {
 		return err
 	}

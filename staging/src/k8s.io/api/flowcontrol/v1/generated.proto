@@ -206,7 +206,9 @@ message LimitedPriorityLevelConfiguration {
   //
   // Bigger numbers mean a larger nominal concurrency limit,
   // at the expense of every other priority level.
-  // This field has a default value of 30.
+  //
+  // If not specified, this field defaults to a value of 30.
+  //
   // +optional
   optional int32 nominalConcurrencyShares = 1;
 
