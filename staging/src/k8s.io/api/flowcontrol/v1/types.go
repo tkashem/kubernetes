@@ -476,9 +476,11 @@ type LimitedPriorityLevelConfiguration struct {
 	//
 	// Bigger numbers mean a larger nominal concurrency limit,
 	// at the expense of every other priority level.
-	// This field has a default value of 30.
+	//
+	// If not specified, this field defaults to a value of 30.
+	//
 	// +optional
-	NominalConcurrencyShares int32 `json:"nominalConcurrencyShares" protobuf:"varint,1,opt,name=nominalConcurrencyShares"`
+	NominalConcurrencyShares *int32 `json:"nominalConcurrencyShares" protobuf:"varint,1,opt,name=nominalConcurrencyShares"`
 
 	// `limitResponse` indicates what to do with requests that can not be executed right now
 	LimitResponse LimitResponse `json:"limitResponse,omitempty" protobuf:"bytes,2,opt,name=limitResponse"`

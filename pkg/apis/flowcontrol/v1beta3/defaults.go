@@ -40,7 +40,24 @@ func SetDefaults_FlowSchemaSpec(spec *v1beta3.FlowSchemaSpec) {
 	}
 }
 
-func SetDefaults_ExemptPriorityLevelConfiguration(eplc *v1beta3.ExemptPriorityLevelConfiguration) {
+// SetDefaults_PriorityLevelConfiguration sets the default values for a
+// PriorityLevelConfiguration object. Since we need to inspect the presence
+// of the roundtrip annotation in order to determine whether the user has
+// specified a zero value for the 'NominalConcurrencyShares' field,
+// the defaulting logic needs visibility to the annotations field.
+func SetDefaults_PriorityLevelConfiguration(in *v1beta3.PriorityLevelConfiguration) {
+	if in.Spec.Limited != nil {
+		applyDefaultsLimitedPriorityLevelConfiguration(in)
+		if in.Spec.Limited.LimitResponse.Queuing != nil {
+			applyDefaultsQueuingConfiguration(in.Spec.Limited.LimitResponse.Queuing)
+		}
+	}
+	if in.Spec.Exempt != nil {
+		applyDefaultsExemptPriorityLevelConfiguration(in.Spec.Exempt)
+	}
+}
+
+func applyDefaultsExemptPriorityLevelConfiguration(eplc *v1beta3.ExemptPriorityLevelConfiguration) {
 	if eplc.NominalConcurrencyShares == nil {
 		eplc.NominalConcurrencyShares = new(int32)
 		*eplc.NominalConcurrencyShares = 0
@@ -51,8 +68,13 @@ func SetDefaults_ExemptPriorityLevelConfiguration(eplc *v1beta3.ExemptPriorityLe
 	}
 }
 
-func SetDefaults_LimitedPriorityLevelConfiguration(lplc *v1beta3.LimitedPriorityLevelConfiguration) {
-	if lplc.NominalConcurrencyShares == 0 {
+func applyDefaultsLimitedPriorityLevelConfiguration(in *v1beta3.PriorityLevelConfiguration) {
+	// for v1beta3, we apply a default value to the NominalConcurrencyShares
+	// field only when:
+	//   a) NominalConcurrencyShares == 0, and
+	//   b) the roundtrip annotation is not set
+	lplc := in.Spec.Limited
+	if _, ok := in.Annotations[v1beta3.PriorityLevelConcurrencyShareDefaultKey]; !ok && lplc.NominalConcurrencyShares == 0 {
 		lplc.NominalConcurrencyShares = PriorityLevelConfigurationDefaultNominalConcurrencyShares
 	}
 	if lplc.LendablePercent == nil {
@@ -61,8 +83,7 @@ func SetDefaults_LimitedPriorityLevelConfiguration(lplc *v1beta3.LimitedPriority
 	}
 }
 
-// SetDefaults_FlowSchema sets default values for flow schema
-func SetDefaults_QueuingConfiguration(cfg *v1beta3.QueuingConfiguration) {
+func applyDefaultsQueuingConfiguration(cfg *v1beta3.QueuingConfiguration) {
 	if cfg.HandSize == 0 {
 		cfg.HandSize = PriorityLevelConfigurationDefaultHandSize
 	}

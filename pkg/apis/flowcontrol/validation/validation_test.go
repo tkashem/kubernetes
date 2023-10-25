@@ -34,6 +34,7 @@ import (
 	"k8s.io/kubernetes/pkg/apis/flowcontrol"
 	"k8s.io/kubernetes/pkg/apis/flowcontrol/internalbootstrap"
 	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 func TestFlowSchemaValidation(t *testing.T) {
@@ -739,7 +740,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 	badSpec := flowcontrol.PriorityLevelConfigurationSpec{
 		Type: flowcontrol.PriorityLevelEnablementLimited,
 		Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-			NominalConcurrencyShares: 42,
+			NominalConcurrencyShares: ptr.To(int32(42)),
 			LimitResponse: flowcontrol.LimitResponse{
 				Type: flowcontrol.LimitResponseTypeReject},
 		},
@@ -764,7 +765,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 		Type:   flowcontrol.PriorityLevelEnablementExempt,
 		Exempt: &flowcontrol.ExemptPriorityLevelConfiguration{},
 		Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-			NominalConcurrencyShares: 42,
+			NominalConcurrencyShares: ptr.To(int32(42)),
 			LimitResponse: flowcontrol.LimitResponse{
 				Type: flowcontrol.LimitResponseTypeReject},
 		},
@@ -790,7 +791,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Type:   flowcontrol.PriorityLevelEnablementLimited,
 			Exempt: &flowcontrol.ExemptPriorityLevelConfiguration{},
 			Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-				NominalConcurrencyShares: 42,
+				NominalConcurrencyShares: ptr.To(int32(42)),
 				LimitResponse: flowcontrol.LimitResponse{
 					Type: flowcontrol.LimitResponseTypeReject},
 			},
@@ -800,6 +801,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 	testCases := []struct {
 		name                       string
 		priorityLevelConfiguration *flowcontrol.PriorityLevelConfiguration
+		requestGV                  *schema.GroupVersion
 		expectedErrors             field.ErrorList
 	}{{
 		name: "exempt should work",
@@ -916,7 +918,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 42,
+					NominalConcurrencyShares: ptr.To(int32(42)),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeReject},
 				},
@@ -932,7 +934,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 100,
+					NominalConcurrencyShares: ptr.To(int32(100)),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeReject,
 						Queuing: &flowcontrol.QueuingConfiguration{
@@ -960,7 +962,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 5,
+					NominalConcurrencyShares: ptr.To(int32(5)),
 					LendablePercent:          pointer.Int32(0),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeReject,
@@ -976,7 +978,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 100,
+					NominalConcurrencyShares: ptr.To(int32(100)),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeQueue,
 					}}},
@@ -991,7 +993,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 100,
+					NominalConcurrencyShares: ptr.To(int32(100)),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeQueue,
 						Queuing: &flowcontrol.QueuingConfiguration{
@@ -1010,7 +1012,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 100,
+					NominalConcurrencyShares: ptr.To(int32(100)),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeQueue,
 						Queuing: &flowcontrol.QueuingConfiguration{
@@ -1031,7 +1033,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 100,
+					NominalConcurrencyShares: ptr.To(int32(100)),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeQueue,
 						Queuing: &flowcontrol.QueuingConfiguration{
@@ -1052,7 +1054,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 100,
+					NominalConcurrencyShares: ptr.To(int32(100)),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeQueue,
 						Queuing: &flowcontrol.QueuingConfiguration{
@@ -1074,7 +1076,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 100,
+					NominalConcurrencyShares: ptr.To(int32(100)),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeQueue,
 						Queuing: &flowcontrol.QueuingConfiguration{
@@ -1093,7 +1095,7 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 			Spec: flowcontrol.PriorityLevelConfigurationSpec{
 				Type: flowcontrol.PriorityLevelEnablementLimited,
 				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-					NominalConcurrencyShares: 100,
+					NominalConcurrencyShares: ptr.To(int32(100)),
 					LimitResponse: flowcontrol.LimitResponse{
 						Type: flowcontrol.LimitResponseTypeQueue,
 						Queuing: &flowcontrol.QueuingConfiguration{
@@ -1105,10 +1107,56 @@ func TestPriorityLevelConfigurationValidation(t *testing.T) {
 		expectedErrors: field.ErrorList{
 			field.Invalid(field.NewPath("spec").Child("limited").Child("limitResponse").Child("queuing").Child("handSize"), int32(8), "should not be greater than queues (7)"),
 		},
+	}, {
+		name: "the roundtrip annotation is forbidden in v1",
+		priorityLevelConfiguration: &flowcontrol.PriorityLevelConfiguration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "with-forbidden-annotation",
+				Annotations: map[string]string{
+					flowcontrolv1beta3.PriorityLevelConcurrencyShareDefaultKey: "",
+				},
+			},
+			Spec: flowcontrol.PriorityLevelConfigurationSpec{
+				Type: flowcontrol.PriorityLevelEnablementLimited,
+				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
+					NominalConcurrencyShares: ptr.To(int32(42)),
+					LimitResponse: flowcontrol.LimitResponse{
+						Type: flowcontrol.LimitResponseTypeReject},
+				},
+			},
+		},
+		requestGV: &flowcontrolv1.SchemeGroupVersion,
+		expectedErrors: field.ErrorList{
+			field.Forbidden(field.NewPath("metadata").Child("annotations"), fmt.Sprintf("annotation '%s' is forbidden in %s", flowcontrolv1beta3.PriorityLevelConcurrencyShareDefaultKey, flowcontrolv1.SchemeGroupVersion)),
+		},
+	}, {
+		name: "the roundtrip annotation is not forbidden in v1beta3",
+		priorityLevelConfiguration: &flowcontrol.PriorityLevelConfiguration{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "with-forbidden-annotation",
+				Annotations: map[string]string{
+					flowcontrolv1beta3.PriorityLevelConcurrencyShareDefaultKey: "",
+				},
+			},
+			Spec: flowcontrol.PriorityLevelConfigurationSpec{
+				Type: flowcontrol.PriorityLevelEnablementLimited,
+				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
+					NominalConcurrencyShares: ptr.To(int32(42)),
+					LimitResponse: flowcontrol.LimitResponse{
+						Type: flowcontrol.LimitResponseTypeReject},
+				},
+			},
+		},
+		requestGV:      &flowcontrolv1beta3.SchemeGroupVersion,
+		expectedErrors: field.ErrorList{},
 	}}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			errs := ValidatePriorityLevelConfiguration(testCase.priorityLevelConfiguration, flowcontrolv1beta3.SchemeGroupVersion)
+			gv := flowcontrolv1beta3.SchemeGroupVersion
+			if testCase.requestGV != nil {
+				gv = *testCase.requestGV
+			}
+			errs := ValidatePriorityLevelConfiguration(testCase.priorityLevelConfiguration, gv)
 			if !assert.ElementsMatch(t, testCase.expectedErrors, errs) {
 				t.Logf("mismatch: %v", cmp.Diff(testCase.expectedErrors, errs))
 			}
@@ -1270,7 +1318,7 @@ func TestValidateNonResourceURLPath(t *testing.T) {
 func TestValidateLimitedPriorityLevelConfiguration(t *testing.T) {
 	errExpectedFn := func(fieldName string) field.ErrorList {
 		return field.ErrorList{
-			field.Invalid(field.NewPath("spec").Child("limited").Child(fieldName), int32(0), "must be positive"),
+			field.Invalid(field.NewPath("spec").Child("limited").Child(fieldName), ptr.To(int32(0)), "must be positive"),
 		}
 	}
 
@@ -1309,7 +1357,7 @@ func TestValidateLimitedPriorityLevelConfiguration(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.requestVersion.String(), func(t *testing.T) {
 			configuration := &flowcontrol.LimitedPriorityLevelConfiguration{
-				NominalConcurrencyShares: test.concurrencyShares,
+				NominalConcurrencyShares: ptr.To(test.concurrencyShares),
 				LimitResponse: flowcontrol.LimitResponse{
 					Type: flowcontrol.LimitResponseTypeReject,
 				},
@@ -1385,7 +1433,7 @@ func TestValidateLimitedPriorityLevelConfigurationWithBorrowing(t *testing.T) {
 	for _, test := range tests {
 		t.Run(makeTestNameFn(test.lendablePercent, test.borrowingLimitPercent), func(t *testing.T) {
 			configuration := &flowcontrol.LimitedPriorityLevelConfiguration{
-				NominalConcurrencyShares: 1,
+				NominalConcurrencyShares: ptr.To(int32(1)),
 				LimitResponse: flowcontrol.LimitResponse{
 					Type: flowcontrol.LimitResponseTypeReject,
 				},
@@ -1397,6 +1445,148 @@ func TestValidateLimitedPriorityLevelConfigurationWithBorrowing(t *testing.T) {
 			errGot := ValidateLimitedPriorityLevelConfiguration(configuration, flowcontrolv1.SchemeGroupVersion, specPath)
 			if !cmp.Equal(test.errExpected, errGot) {
 				t.Errorf("Expected error: %v, diff: %s", test.errExpected, cmp.Diff(test.errExpected, errGot))
+			}
+		})
+	}
+}
+
+func TestValidateUpdatePriorityLevelConfiguration(t *testing.T) {
+	objFn := func(v *int32) *flowcontrol.PriorityLevelConfiguration {
+		return &flowcontrol.PriorityLevelConfiguration{
+			Spec: flowcontrol.PriorityLevelConfigurationSpec{
+				Type: flowcontrol.PriorityLevelEnablementLimited,
+				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
+					NominalConcurrencyShares: v,
+					LimitResponse: flowcontrol.LimitResponse{
+						Type: flowcontrol.LimitResponseTypeReject},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		old, new     *flowcontrol.PriorityLevelConfiguration
+		gv           schema.GroupVersion
+		expectedErrs field.ErrorList
+	}{
+		{
+			name: "v1beta3, new object has a zero, old object does not have a zero, error expected",
+			gv:   flowcontrolv1beta3.SchemeGroupVersion,
+			new:  objFn(ptr.To(int32(0))),
+			old:  objFn(ptr.To(int32(1))),
+			expectedErrs: field.ErrorList{
+				field.Forbidden(field.NewPath("spec").Child("limited").Child("nominalConcurrencyShares"),
+					"setting a zero value is forbidden in 1.29, unless the existing object has a zero value as well"),
+			},
+		},
+		{
+			name: "v1, new object has a zero, old object does not have a zero, error expected",
+			gv:   flowcontrolv1.SchemeGroupVersion,
+			new:  objFn(ptr.To(int32(0))),
+			old:  objFn(ptr.To(int32(1))),
+			expectedErrs: field.ErrorList{
+				field.Forbidden(field.NewPath("spec").Child("limited").Child("nominalConcurrencyShares"),
+					"setting a zero value is forbidden in 1.29, unless the existing object has a zero value as well"),
+			},
+		},
+		{
+			name:         "v1beta2, new object has a zero, old object does not have a zero, no error expected",
+			gv:           flowcontrolv1beta2.SchemeGroupVersion,
+			new:          objFn(ptr.To(int32(0))),
+			old:          objFn(ptr.To(int32(1))),
+			expectedErrs: field.ErrorList{},
+		},
+		{
+			name:         "v1beta1, new object has a zero, old object does not have a zero, no error expected",
+			gv:           flowcontrolv1beta1.SchemeGroupVersion,
+			new:          objFn(ptr.To(int32(0))),
+			old:          objFn(ptr.To(int32(1))),
+			expectedErrs: field.ErrorList{},
+		},
+		{
+			name:         "v1beta3, new object has a zero, old object has a zero, no error expected",
+			gv:           flowcontrolv1beta3.SchemeGroupVersion,
+			new:          objFn(ptr.To(int32(0))),
+			old:          objFn(ptr.To(int32(0))),
+			expectedErrs: field.ErrorList{},
+		},
+		{
+			name:         "v1, new object has a zero, old object has a zero, error expected",
+			gv:           flowcontrolv1.SchemeGroupVersion,
+			new:          objFn(ptr.To(int32(0))),
+			old:          objFn(ptr.To(int32(0))),
+			expectedErrs: field.ErrorList{},
+		},
+		{
+			name:         "v1beta3, new object does not have a zero, old object has a zero, no error expected",
+			gv:           flowcontrolv1beta3.SchemeGroupVersion,
+			new:          objFn(ptr.To(int32(1))),
+			old:          objFn(ptr.To(int32(0))),
+			expectedErrs: field.ErrorList{},
+		},
+		{
+			name:         "v1, new object has does not have a zero, old object has a zero, no error expected",
+			gv:           flowcontrolv1.SchemeGroupVersion,
+			new:          objFn(ptr.To(int32(1))),
+			old:          objFn(ptr.To(int32(0))),
+			expectedErrs: field.ErrorList{},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := ValidateUpdatePriorityLevelConfiguration(test.new, test.old, test.gv)
+			if !assert.ElementsMatch(t, test.expectedErrs, errs) {
+				t.Logf("mismatch: %v", cmp.Diff(test.expectedErrs, errs))
+			}
+		})
+	}
+}
+
+func TestValidateCreatePriorityLevelConfiguration(t *testing.T) {
+	objFn := func(v *int32) *flowcontrol.PriorityLevelConfiguration {
+		return &flowcontrol.PriorityLevelConfiguration{
+			Spec: flowcontrol.PriorityLevelConfigurationSpec{
+				Type: flowcontrol.PriorityLevelEnablementLimited,
+				Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
+					NominalConcurrencyShares: v,
+					LimitResponse: flowcontrol.LimitResponse{
+						Type: flowcontrol.LimitResponseTypeReject},
+				},
+			},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		obj          *flowcontrol.PriorityLevelConfiguration
+		gv           schema.GroupVersion
+		expectedErrs field.ErrorList
+	}{
+		{
+			name: "v1beta3, object has a zero, error expected",
+			gv:   flowcontrolv1beta3.SchemeGroupVersion,
+			obj:  objFn(ptr.To(int32(0))),
+			expectedErrs: field.ErrorList{
+				field.Forbidden(field.NewPath("spec").Child("limited").Child("nominalConcurrencyShares"), "zero value is forbidden in 1.29"),
+			},
+		},
+		{
+			name: "v1, object has a zero, error expected",
+			gv:   flowcontrolv1.SchemeGroupVersion,
+			obj:  objFn(ptr.To(int32(0))),
+			expectedErrs: field.ErrorList{
+				field.Forbidden(field.NewPath("spec").Child("limited").Child("nominalConcurrencyShares"), "zero value is forbidden in 1.29"),
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			errs := ValidateCreatePriorityLevelConfiguration(test.obj, test.gv)
+			if !assert.ElementsMatch(t, test.expectedErrs, errs) {
+				t.Logf("mismatch: %v", cmp.Diff(test.expectedErrs, errs))
 			}
 		})
 	}

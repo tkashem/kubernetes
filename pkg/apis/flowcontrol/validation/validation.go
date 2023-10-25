@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"strings"
 
+	flowcontrolv1 "k8s.io/api/flowcontrol/v1"
 	flowcontrolv1beta1 "k8s.io/api/flowcontrol/v1beta1"
 	flowcontrolv1beta2 "k8s.io/api/flowcontrol/v1beta2"
+	flowcontrolv1beta3 "k8s.io/api/flowcontrol/v1beta3"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apimachineryvalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -339,9 +341,52 @@ func ValidateFlowSchemaCondition(condition *flowcontrol.FlowSchemaCondition, fld
 	return allErrs
 }
 
+func ValidateCreatePriorityLevelConfiguration(obj *flowcontrol.PriorityLevelConfiguration, gvk schema.GroupVersion) field.ErrorList {
+	// TODO(121510): 1.29: don't allow a zero value, either via v1 or
+	//  v1beta3 (with the roundtrip annotation) for the
+	//  'nominalConcurrencyShares' field of 'limited' for CREATE operation.
+	//  1:30: lift this restriction, allow zero value via v1 or v1beta3
+	var allErrs field.ErrorList
+	if !(gvk == flowcontrolv1beta3.SchemeGroupVersion || gvk == flowcontrolv1.SchemeGroupVersion) {
+		return allErrs
+	}
+	if isNominalConcurrencyShareFieldDefault(obj) {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("spec").Child("limited").Child("nominalConcurrencyShares"), "zero value is forbidden in 1.29"))
+	}
+	return allErrs
+}
+
+func ValidateUpdatePriorityLevelConfiguration(obj, old *flowcontrol.PriorityLevelConfiguration, gvk schema.GroupVersion) field.ErrorList {
+	// TODO(121510): 1.29: only allow a zero value, either via v1 or
+	//  v1beta3 (with the roundtrip annotation) for the
+	//  'nominalConcurrencyShares' field of 'limited' for UPDATE operation,
+	//  only if the existing object already contains a zero value.
+	//  1:30: lift this restriction, allow zero value via v1 or v1beta3
+	var allErrs field.ErrorList
+	if !(gvk == flowcontrolv1beta3.SchemeGroupVersion || gvk == flowcontrolv1.SchemeGroupVersion) {
+		return allErrs
+	}
+	if !isNominalConcurrencyShareFieldDefault(obj) {
+		return allErrs
+	}
+
+	// the existing object must have a zero value as well
+	if !isNominalConcurrencyShareFieldDefault(old) {
+		fd := field.NewPath("spec").Child("limited").Child("nominalConcurrencyShares")
+		allErrs = append(allErrs, field.Forbidden(fd, "setting a zero value is forbidden in 1.29, unless the existing object has a zero value as well"))
+	}
+	return allErrs
+}
+
 // ValidatePriorityLevelConfiguration validates priority-level-configuration.
 func ValidatePriorityLevelConfiguration(pl *flowcontrol.PriorityLevelConfiguration, requestGV schema.GroupVersion) field.ErrorList {
 	allErrs := apivalidation.ValidateObjectMeta(&pl.ObjectMeta, false, ValidatePriorityLevelConfigurationName, field.NewPath("metadata"))
+
+	// the roundtrip annotation is forbidden in v1
+	if _, ok := pl.ObjectMeta.Annotations[flowcontrolv1beta3.PriorityLevelConcurrencyShareDefaultKey]; ok && requestGV == flowcontrolv1.SchemeGroupVersion {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("metadata").Child("annotations"), fmt.Sprintf("annotation '%s' is forbidden in %s", flowcontrolv1beta3.PriorityLevelConcurrencyShareDefaultKey, flowcontrolv1.SchemeGroupVersion)))
+	}
+
 	specPath := field.NewPath("spec")
 	allErrs = append(allErrs, ValidatePriorityLevelConfigurationSpec(&pl.Spec, requestGV, pl.Name, specPath)...)
 	allErrs = append(allErrs, ValidateIfMandatoryPriorityLevelConfigurationObject(pl, specPath)...)
@@ -412,7 +457,7 @@ func ValidatePriorityLevelConfigurationSpec(spec *flowcontrol.PriorityLevelConfi
 // ValidateLimitedPriorityLevelConfiguration validates the configuration for an execution-limited priority level
 func ValidateLimitedPriorityLevelConfiguration(lplc *flowcontrol.LimitedPriorityLevelConfiguration, requestGV schema.GroupVersion, fldPath *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
-	if lplc.NominalConcurrencyShares <= 0 {
+	if *lplc.NominalConcurrencyShares <= 0 {
 		allErrs = append(allErrs, field.Invalid(fldPath.Child(getVersionedFieldNameForConcurrencyShares(requestGV)), lplc.NominalConcurrencyShares, "must be positive"))
 	}
 	allErrs = append(allErrs, ValidateLimitResponse(lplc.LimitResponse, fldPath.Child("limitResponse"))...)
@@ -561,6 +606,13 @@ func memberInList(seek string, a ...string) bool {
 		if ai == seek {
 			return true
 		}
+	}
+	return false
+}
+
+func isNominalConcurrencyShareFieldDefault(obj *flowcontrol.PriorityLevelConfiguration) bool {
+	if limited := obj.Spec.Limited; limited != nil {
+		return limited.NominalConcurrencyShares != nil && *limited.NominalConcurrencyShares == 0
 	}
 	return false
 }

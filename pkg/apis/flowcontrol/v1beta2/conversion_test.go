@@ -22,6 +22,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"k8s.io/api/flowcontrol/v1beta2"
 	"k8s.io/kubernetes/pkg/apis/flowcontrol"
+	"k8s.io/utils/ptr"
 )
 
 func TestConvert_v1beta2_LimitedPriorityLevelConfiguration_To_flowcontrol_LimitedPriorityLevelConfiguration(t *testing.T) {
@@ -39,7 +40,7 @@ func TestConvert_v1beta2_LimitedPriorityLevelConfiguration_To_flowcontrol_Limite
 				},
 			},
 			expected: &flowcontrol.LimitedPriorityLevelConfiguration{
-				NominalConcurrencyShares: 100,
+				NominalConcurrencyShares: ptr.To(int32(100)),
 				LimitResponse: flowcontrol.LimitResponse{
 					Type: flowcontrol.LimitResponseTypeReject,
 				},
@@ -62,14 +63,15 @@ func TestConvert_v1beta2_LimitedPriorityLevelConfiguration_To_flowcontrol_Limite
 
 func TestConvert_flowcontrol_LimitedPriorityLevelConfiguration_To_v1beta2_LimitedPriorityLevelConfiguration(t *testing.T) {
 	tests := []struct {
-		name     string
-		in       *flowcontrol.LimitedPriorityLevelConfiguration
-		expected *v1beta2.LimitedPriorityLevelConfiguration
+		name        string
+		in          *flowcontrol.LimitedPriorityLevelConfiguration
+		expected    *v1beta2.LimitedPriorityLevelConfiguration
+		errExpected error
 	}{
 		{
 			name: "assured concurrency shares is set as expected",
 			in: &flowcontrol.LimitedPriorityLevelConfiguration{
-				NominalConcurrencyShares: 100,
+				NominalConcurrencyShares: ptr.To(int32(100)),
 				LimitResponse: flowcontrol.LimitResponse{
 					Type: flowcontrol.LimitResponseTypeReject,
 				},
@@ -86,8 +88,18 @@ func TestConvert_flowcontrol_LimitedPriorityLevelConfiguration_To_v1beta2_Limite
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			out := &v1beta2.LimitedPriorityLevelConfiguration{}
-			if err := Convert_flowcontrol_LimitedPriorityLevelConfiguration_To_v1beta2_LimitedPriorityLevelConfiguration(test.in, out, nil); err != nil {
-				t.Errorf("Expected no error, but got: %v", err)
+			errGot := Convert_flowcontrol_LimitedPriorityLevelConfiguration_To_v1beta2_LimitedPriorityLevelConfiguration(test.in, out, nil)
+
+			switch {
+			case test.errExpected != nil:
+				if want, got := test.errExpected.Error(), errGot.Error(); want != got {
+					t.Errorf("Expected error: %v, but got: %v", want, got)
+				}
+				return
+			default:
+				if errGot != nil {
+					t.Errorf("Expected no error, but got: %v", errGot)
+				}
 			}
 			if !cmp.Equal(test.expected, out) {
 				t.Errorf("Expected a match, diff: %s", cmp.Diff(test.expected, out))

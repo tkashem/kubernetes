@@ -49,6 +49,7 @@ import (
 	"k8s.io/kubernetes/pkg/apis/storage"
 	"k8s.io/kubernetes/pkg/printers"
 	utilpointer "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 var containerRestartPolicyAlways = api.ContainerRestartPolicyAlways
@@ -5870,7 +5871,7 @@ func TestPrintPriorityLevelConfiguration(t *testing.T) {
 				Spec: flowcontrol.PriorityLevelConfigurationSpec{
 					Type: flowcontrol.PriorityLevelEnablementLimited,
 					Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-						NominalConcurrencyShares: 47,
+						NominalConcurrencyShares: ptr.To(int32(47)),
 						LimitResponse: flowcontrol.LimitResponse{
 							Type: flowcontrol.LimitResponseTypeReject,
 						},
@@ -5878,7 +5879,7 @@ func TestPrintPriorityLevelConfiguration(t *testing.T) {
 				},
 			},
 			// Columns: Name, Type, NominalConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age
-			expected: []metav1.TableRow{{Cells: []interface{}{"unqueued", "Limited", int32(47), "<none>", "<none>", "<none>", "0s"}}},
+			expected: []metav1.TableRow{{Cells: []interface{}{"unqueued", "Limited", ptr.To(int32(47)), "<none>", "<none>", "<none>", "0s"}}},
 		},
 		{
 			pl: flowcontrol.PriorityLevelConfiguration{
@@ -5889,7 +5890,7 @@ func TestPrintPriorityLevelConfiguration(t *testing.T) {
 				Spec: flowcontrol.PriorityLevelConfigurationSpec{
 					Type: flowcontrol.PriorityLevelEnablementLimited,
 					Limited: &flowcontrol.LimitedPriorityLevelConfiguration{
-						NominalConcurrencyShares: 42,
+						NominalConcurrencyShares: ptr.To(int32(42)),
 						LimitResponse: flowcontrol.LimitResponse{
 							Type: flowcontrol.LimitResponseTypeQueue,
 							Queuing: &flowcontrol.QueuingConfiguration{
@@ -5902,7 +5903,7 @@ func TestPrintPriorityLevelConfiguration(t *testing.T) {
 				},
 			},
 			// Columns: Name, Type, NominalConcurrencyShares, Queues, HandSize, QueueLengthLimit, Age
-			expected: []metav1.TableRow{{Cells: []interface{}{"queued", "Limited", int32(42), int32(8), int32(3), int32(4), "0s"}}},
+			expected: []metav1.TableRow{{Cells: []interface{}{"queued", "Limited", ptr.To(int32(42)), int32(8), int32(3), int32(4), "0s"}}},
 		},
 	}
 
