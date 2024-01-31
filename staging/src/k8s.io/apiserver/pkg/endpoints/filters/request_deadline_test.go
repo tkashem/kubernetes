@@ -19,6 +19,7 @@ package filters
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -243,7 +244,7 @@ func TestWithRequestDeadlineWithClock(t *testing.T) {
 	fakeSink := &fakeAuditSink{}
 	fakeRuleEvaluator := policy.NewFakePolicyRuleEvaluator(auditinternal.LevelRequestResponse, nil)
 	withDeadline := withRequestDeadline(handler, fakeSink, fakeRuleEvaluator,
-		func(_ *http.Request, _ *request.RequestInfo) bool { return false }, newSerializer(), time.Minute, fakeClock)
+		func(_ *http.Request, _ *request.RequestInfo) bool { return false }, newSerializer(), time.Minute, fakeClock, newTimeoutTracker())
 	withDeadline = WithRequestInfo(withDeadline, &fakeRequestResolver{})
 
 	testRequest := newRequest(t, "/api/v1/namespaces?timeout=1s")
@@ -495,7 +496,7 @@ func TestWithRequestDeadlineWithPerHandlerReadWriteTimeoutNonLongRunningRequest(
 			t.Errorf("expected the request context to have a deadline of: %s, but got: %s", timeoutWant, timeoutGot)
 		}
 	})
-	handler := withRequestDeadline(h, &fakeAuditSink{}, fakeRuleEvaluator, longRunningFn, newSerializer(), time.Minute, fakeClock)
+	handler := withRequestDeadline(h, &fakeAuditSink{}, fakeRuleEvaluator, longRunningFn, newSerializer(), time.Minute, fakeClock, newTimeoutTracker())
 	handler = WithRequestInfo(handler, fakeReqResolver)
 	handler = withRequestReceivedTimestampWithClock(handler, fakeClock)
 	handler = WithAuditInit(handler)
@@ -521,6 +522,149 @@ func TestWithRequestDeadlineWithPerHandlerReadWriteTimeoutNonLongRunningRequest(
 	if len(w.WriteDeadlines) == 0 || w.WriteDeadlines[0] != deadlineWant || len(w.WriteDeadlines) > 1 {
 		t.Errorf("expected the write timeout to be set at %s, but got: %v", deadlineWant, w.WriteDeadlines)
 	}
+}
+
+func TestWithRequestDeadlineWithPerHandlerReadWriteTimeoutWithPostTimeout(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.PerHandlerReadWriteTimeout, true)()
+
+	fakeClock := testingclock.NewFakeClock(time.Now())
+	fakeRuleEvaluator := policy.NewFakePolicyRuleEvaluator(auditinternal.LevelRequestResponse, nil)
+	// we want a non long-running request
+	fakeReqResolver := &fakeRequestResolver{reqInfo: &request.RequestInfo{Verb: "get"}}
+	longRunningFn := func(_ *http.Request, _ *request.RequestInfo) bool { return false }
+
+	tracker := &trackerWrapper{calledCh: make(chan struct{}), tracker: newTimeoutTracker()}
+	blockedCh, doneCh := make(chan struct{}), make(chan struct{})
+	var dataWant *RequestData
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(doneCh)
+
+		ctx := r.Context()
+		started, ok := request.ReceivedTimestampFrom(ctx)
+		if !ok {
+			t.Errorf("expected the request context to have a received at timestamp, but got: %s", started)
+		}
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Errorf("expected the request context to have a deadline")
+		}
+		dataWant = &RequestData{StartedAt: started, DeadlineAt: deadline, RequestURI: r.RequestURI, RequestAuditID: ""}
+
+		<-blockedCh
+
+		<-time.After(time.Second)
+	})
+	handler := withRequestDeadline(h, &fakeAuditSink{}, fakeRuleEvaluator, longRunningFn, newSerializer(), time.Minute, fakeClock, tracker)
+	handler = WithRequestInfo(handler, fakeReqResolver)
+	handler = withRequestReceivedTimestampWithClock(handler, fakeClock)
+	handler = WithAuditInit(handler)
+
+	server := httptest.NewUnstartedServer(handler)
+	defer server.Close()
+	server.EnableHTTP2 = true
+	server.StartTLS()
+
+	client := server.Client()
+	client.Get(server.URL + "/foo?timeout=1s")
+
+	select {
+	case <-tracker.calledCh:
+		t.Logf("post-timeout monitor has been invoked")
+	case <-time.After(wait.ForeverTestTimeout):
+		t.Errorf("expected the post-timeout monitor has been invoked")
+	}
+
+	// verify that the monitor has the request in its record
+	if len(tracker.timedout) != 1 {
+		t.Errorf("expected the post-timeout monitor to be tracking the request")
+		return
+	}
+
+	data := tracker.timedout[0]
+	if data.StartedAt != dataWant.StartedAt {
+		t.Errorf("expected the data to be equal")
+	}
+
+	close(blockedCh)
+	<-doneCh
+	<-data.HandlerDoneCh
+
+	tracker.Sweep()
+	if len(tracker.timedout) != 0 {
+		t.Errorf("expected the post-timeout monitor to be losing the request")
+		return
+	}
+}
+
+func TestWithRequestDeadlineWithPerHandlerReadWriteTimeoutWithPostTimeout2(t *testing.T) {
+	defer featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.PerHandlerReadWriteTimeout, true)()
+
+	fakeClock := testingclock.NewFakeClock(time.Now())
+	fakeRuleEvaluator := policy.NewFakePolicyRuleEvaluator(auditinternal.LevelRequestResponse, nil)
+	// we want a non long-running request
+	fakeReqResolver := &fakeRequestResolver{reqInfo: &request.RequestInfo{Verb: "get"}}
+	longRunningFn := func(_ *http.Request, _ *request.RequestInfo) bool { return false }
+
+	tracker := &trackerWrapper{calledCh: make(chan struct{}), tracker: newTimeoutTracker()}
+	doneCh := make(chan struct{})
+	var ctx, deadlineCtx context.Context
+	var cancel context.CancelFunc
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(doneCh)
+		deadlineCtx = r.Context()
+	})
+	handler := withRequestDeadline(h, &fakeAuditSink{}, fakeRuleEvaluator, longRunningFn, newSerializer(), time.Minute, fakeClock, tracker)
+	handler = WithRequestInfo(handler, fakeReqResolver)
+	handler = withRequestReceivedTimestampWithClock(handler, fakeClock)
+	handler = WithAuditInit(handler)
+	handler = func(inner http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel = context.WithCancel(r.Context())
+			r = r.WithContext(ctx)
+			inner.ServeHTTP(w, r)
+		})
+	}(handler)
+
+	server := httptest.NewUnstartedServer(handler)
+	defer server.Close()
+	server.EnableHTTP2 = true
+	server.StartTLS()
+
+	client := server.Client()
+	client.Get(server.URL + "/foo?timeout=1m")
+
+	select {
+	case <-tracker.calledCh:
+		t.Errorf("post-timeout monitor has been invoked")
+	default:
+	}
+	if len(tracker.timedout) != 0 {
+		t.Errorf("expected the post-timeout monitor to be losing the request")
+		return
+	}
+
+	cancel()
+	<-deadlineCtx.Done()
+
+	select {
+	case <-tracker.calledCh:
+		t.Errorf("post-timeout monitor has been invoked")
+	case <-time.After(3 * time.Second):
+	}
+	if len(tracker.timedout) != 0 {
+		t.Errorf("expected the post-timeout monitor to be losing the request")
+		return
+	}
+}
+
+type trackerWrapper struct {
+	*tracker
+	calledCh chan struct{}
+}
+
+func (w trackerWrapper) Enter(key *http.Request, data *RequestData) {
+	defer close(w.calledCh)
+	w.tracker.Enter(key, data)
 }
 
 func TestWithRequestDeadlineWithPerHandlerReadWriteTimeoutWatchRequest(t *testing.T) {
@@ -554,7 +698,7 @@ func TestWithRequestDeadlineWithPerHandlerReadWriteTimeoutWatchRequest(t *testin
 			t.Errorf("did not expect the request context to have a deadline")
 		}
 	})
-	handler := withRequestDeadline(h, &fakeAuditSink{}, fakeRuleEvaluator, longRunningFn, newSerializer(), time.Minute, fakeClock)
+	handler := withRequestDeadline(h, &fakeAuditSink{}, fakeRuleEvaluator, longRunningFn, newSerializer(), time.Minute, fakeClock, newTimeoutTracker())
 	handler = WithRequestInfo(handler, fakeReqResolver)
 	handler = withRequestReceivedTimestampWithClock(handler, fakeClock)
 	handler = WithAuditInit(handler)
@@ -849,7 +993,20 @@ func TestPerHandlerWriteDeadlineHTTP1WithTimeoutBeforeHandlerWrites(t *testing.T
 		}
 	}))
 
+	f, err := os.OpenFile("/tmp/keys", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Errorf("failed to open key file: %v", err)
+		return
+	}
+	defer func() {
+		if err := os.Remove("/tmp/keys"); err != nil {
+			t.Logf("failed to remove keys file: %v", err)
+		}
+	}()
+	defer f.Close()
+
 	defer server.Close()
+	server.TLS = &tls.Config{KeyLogWriter: f}
 	server.StartTLS()
 
 	client := server.Client()
