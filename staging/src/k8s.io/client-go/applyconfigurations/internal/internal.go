@@ -13472,6 +13472,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: gracePeriodSeconds
       type:
         scalar: numeric
+    - name: ignoreStoreReadErrorWithClusterBreakingPotential
+      type:
+        scalar: boolean
     - name: kind
       type:
         scalar: string
