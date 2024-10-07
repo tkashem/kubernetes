@@ -26,6 +26,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+
+	"k8s.io/utils/ptr"
 )
 
 // LabelSelectorValidationOptions is a struct that can be passed to ValidateLabelSelector to record the validate options
@@ -165,6 +167,7 @@ func ValidateDeleteOptions(options *metav1.DeleteOptions) field.ErrorList {
 		allErrs = append(allErrs, field.NotSupported(field.NewPath("propagationPolicy"), options.PropagationPolicy, []string{string(metav1.DeletePropagationForeground), string(metav1.DeletePropagationBackground), string(metav1.DeletePropagationOrphan), "nil"}))
 	}
 	allErrs = append(allErrs, ValidateDryRun(field.NewPath("dryRun"), options.DryRun)...)
+	allErrs = append(allErrs, ValidateIgnoreStoreReadError(field.NewPath("ignoreStoreReadErrorWithClusterBreakingPotential"), options)...)
 	return allErrs
 }
 
@@ -356,4 +359,29 @@ func isValidConditionReason(value string) []string {
 		return []string{validation.RegexError(conditionReasonErrMsg, conditionReasonFmt, "my_name", "MY_NAME", "MyName", "ReasonA,ReasonB", "ReasonA:ReasonB")}
 	}
 	return nil
+}
+
+// ValidateIgnoreStoreReadError validates that delete options are valid when
+// ignoreStoreReadErrorWithClusterBreakingPotential is enabled
+func ValidateIgnoreStoreReadError(fldPath *field.Path, options *metav1.DeleteOptions) field.ErrorList {
+	allErrs := field.ErrorList{}
+	if ignore := ptr.Deref[bool](options.IgnoreStoreReadErrorWithClusterBreakingPotential, false); ignore {
+		if len(options.DryRun) > 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath, ignore, "ignoreStoreReadErrorWithClusterBreakingPotential and dryRun cannot be both set"))
+		}
+		if options.PropagationPolicy != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, ignore, "ignoreStoreReadErrorWithClusterBreakingPotential and propagationPolicy cannot be both set"))
+		}
+		//nolint:staticcheck // Keep validation for deprecated OrphanDependents option until it's being removed
+		if options.OrphanDependents != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, ignore, "ignoreStoreReadErrorWithClusterBreakingPotential and orphanDependents cannot be both set"))
+		}
+		if options.GracePeriodSeconds != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, ignore, "ignoreStoreReadErrorWithClusterBreakingPotential and gracePeriodSeconds cannot be both set"))
+		}
+		if options.Preconditions != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, ignore, "ignoreStoreReadErrorWithClusterBreakingPotential and preconditions cannot be both set"))
+		}
+	}
+	return allErrs
 }
