@@ -30,6 +30,7 @@ import (
 	certsubjectrestriction "k8s.io/kubernetes/plugin/pkg/admission/certificates/subjectrestriction"
 	"k8s.io/kubernetes/plugin/pkg/admission/defaulttolerationseconds"
 	"k8s.io/kubernetes/plugin/pkg/admission/serviceaccount"
+	"k8s.io/kubernetes/plugin/pkg/admission/unsafedeletepolicy"
 )
 
 // DefaultOffAdmissionPlugins get admission plugins off by default for kube-apiserver.
@@ -46,6 +47,7 @@ func DefaultOffAdmissionPlugins() sets.Set[string] {
 		ctbattest.PluginName,                 // ClusterTrustBundleAttest
 		certsubjectrestriction.PluginName,    // CertificateSubjectRestriction
 		validatingadmissionpolicy.PluginName, // ValidatingAdmissionPolicy, only active when feature gate ValidatingAdmissionPolicy is enabled
+		unsafedeletepolicy.PluginName,        // AllowUnsafeMalformedObjectDeletion, only active when feature gate AllowUnsafeMalformedObjectDeletion is enabled
 	)
 
 	return sets.New(options.AllOrderedPlugins...).Difference(defaultOnPlugins)

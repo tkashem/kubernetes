@@ -51,6 +51,7 @@ import (
 	"k8s.io/kubernetes/plugin/pkg/admission/storage/persistentvolume/resize"
 	"k8s.io/kubernetes/plugin/pkg/admission/storage/storageclass/setdefault"
 	"k8s.io/kubernetes/plugin/pkg/admission/storage/storageobjectinuseprotection"
+	"k8s.io/kubernetes/plugin/pkg/admission/unsafedeletepolicy"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/admission"
@@ -64,6 +65,7 @@ import (
 var AllOrderedPlugins = []string{
 	admit.PluginName,                        // AlwaysAdmit
 	autoprovision.PluginName,                // NamespaceAutoProvision
+	unsafedeletepolicy.PluginName,           // AllowUnsafeMalformedObjectDeletion
 	lifecycle.PluginName,                    // NamespaceLifecycle
 	exists.PluginName,                       // NamespaceExists
 	antiaffinity.PluginName,                 // LimitPodHardAntiAffinityTopology
@@ -106,6 +108,7 @@ var AllOrderedPlugins = []string{
 // The order of registration is irrelevant, see AllOrderedPlugins for execution order.
 func RegisterAllAdmissionPlugins(plugins *admission.Plugins) {
 	admit.Register(plugins) // DEPRECATED as no real meaning
+	unsafedeletepolicy.Register(plugins)
 	alwayspullimages.Register(plugins)
 	antiaffinity.Register(plugins)
 	defaulttolerationseconds.Register(plugins)
@@ -160,6 +163,7 @@ func DefaultOffAdmissionPlugins() sets.Set[string] {
 		defaultingressclass.PluginName,          // DefaultIngressClass
 		podsecurity.PluginName,                  // PodSecurity
 		validatingadmissionpolicy.PluginName,    // ValidatingAdmissionPolicy, only active when feature gate ValidatingAdmissionPolicy is enabled
+		unsafedeletepolicy.PluginName,           // AllowUnsafeMalformedObjectDeletion, only active when feature gate AllowUnsafeMalformedObjectDeletion is enabled
 	)
 
 	return sets.New(AllOrderedPlugins...).Difference(defaultOnPlugins)
