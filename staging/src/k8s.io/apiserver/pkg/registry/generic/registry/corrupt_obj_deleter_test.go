@@ -19,6 +19,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -297,6 +298,107 @@ func TestUnsafeDeleteWithUnexpectedError(t *testing.T) {
 	if want, got := 0, cs.unsafeDeleteInvoked; want != got {
 		t.Errorf("Expected unsafe-delete to be invoked %d time(s), but got: %d", want, got)
 	}
+}
+
+func TestUnsafeDeleteWithLatestRevision(t *testing.T) {
+	ctx := genericapirequest.WithNamespace(genericapirequest.NewContext(), "test")
+	destroyFunc, registry := NewTestGenericStoreRegistry(t)
+	defer destroyFunc()
+
+	object := &example.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+		Spec:       example.PodSpec{NodeName: "machine"},
+	}
+	// a) create the target object
+	_, err := registry.Create(ctx, object, rest.ValidateAllObjectFunc, &metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// b) get the revision of the target object from the storage
+	obj, err := registry.Get(ctx, object.Name, &metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	rv, err := strconv.Atoi(obj.(*example.Pod).ResourceVersion)
+	if err != nil {
+		t.Fatalf("Unexpected error getting revision of the object: %v", err)
+	}
+
+	// c) wrap the storage to return corrupt object error
+	cs := &corruptStorage{
+		Interface: registry.Storage.Storage,
+		err:       storage.NewCorruptObjError("key", storage.NewInternalErrorWithRevision(int64(rv), fmt.Errorf("untransformable"))),
+	}
+	registry.Storage.Storage = cs
+	ctx = enableAudit(ctx)
+	deleter := NewCorruptObjectDeleter(registry)
+
+	// d) set the delete option to ignore store read error
+	got := result{event: audit.AuditEventFrom(ctx)}
+	_, got.deleted, got.err = deleter.Delete(ctx, object.Name, rest.ValidateAllObjectFunc, &metav1.DeleteOptions{
+		IgnoreStoreReadErrorWithClusterBreakingPotential: ptr.To[bool](true),
+	})
+	want := deleteWant{
+		annotation: true,
+		deleted:    true,
+		checkErr:   wantNoError,
+	}
+	want.verify(t, got)
+}
+
+func TestUnsafeDeleteWithOlderRevision(t *testing.T) {
+	ctx := genericapirequest.WithNamespace(genericapirequest.NewContext(), "test")
+	destroyFunc, registry := NewTestGenericStoreRegistry(t)
+	defer destroyFunc()
+
+	object := &example.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "foo"},
+		Spec:       example.PodSpec{NodeName: "machine"},
+	}
+	// a) create the target object
+	_, err := registry.Create(ctx, object, rest.ValidateAllObjectFunc, &metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	// b) get the revision of the target object from the storage
+	obj, err := registry.Get(ctx, "foo", &metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Unexpected error from Get: %v", err)
+	}
+	rv, err := strconv.Atoi(obj.(*example.Pod).ResourceVersion)
+	if err != nil {
+		t.Fatalf("Unexpected error geeting revision of the obeject: %v", err)
+	}
+
+	// c) update the object so it gets a new revision
+	object.Spec.NodeName = "another-machine"
+	if _, _, err := registry.Update(ctx, "foo", rest.DefaultUpdatedObjectInfo(object), rest.ValidateAllObjectFunc, rest.ValidateAllObjectUpdateFunc, false, &metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("Unexpected error from update: %v", err)
+	}
+
+	// d) wrap the storage to return corrupt object error
+	cs := &corruptStorage{
+		Interface: registry.Storage.Storage,
+		// we trick the Get operation to return an older revision
+		err: storage.NewCorruptObjError("key", storage.NewInternalErrorWithRevision(int64(rv), fmt.Errorf("untransformable"))),
+	}
+	registry.Storage.Storage = cs
+	ctx = enableAudit(ctx)
+	deleter := NewCorruptObjectDeleter(registry)
+
+	// e) try unsafe-delete
+	got := result{event: audit.AuditEventFrom(ctx)}
+	_, got.deleted, got.err = deleter.Delete(ctx, object.Name, rest.ValidateAllObjectFunc, &metav1.DeleteOptions{
+		IgnoreStoreReadErrorWithClusterBreakingPotential: ptr.To[bool](true),
+	})
+	want := deleteWant{
+		deleted:    false,
+		annotation: true,
+		checkErr:   wantErrContains(fmt.Sprintf("Precondition failed: ResourceVersion in precondition: %d, ResourceVersion in object meta: %d", rv, rv+1)),
+	}
+	want.verify(t, got)
 }
 
 type corruptStorage struct {
