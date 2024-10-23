@@ -19,7 +19,6 @@ package registry
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -48,26 +47,26 @@ var _ rest.GracefulDeleter = &corruptObjectDeleter{}
 // post deletion hook defined in 'AfterDelete' of the registry.
 //
 // WARNING: This may break the cluster if the resource being deleted has dependencies.
-func NewCorruptObjectDeleter(store *Store) *corruptObjectDeleter {
+func NewCorruptObjectDeleter(store *Store) rest.GracefulDeleter {
 	return &corruptObjectDeleter{
-		GracefulDeleter:          store,
-		KeyFunc:                  store.KeyFunc,
-		NewFunc:                  store.NewFunc,
-		DefaultQualifiedResource: store.DefaultQualifiedResource,
-		Storage:                  store.Storage.Storage,
+		store:                    store,
+		keyFunc:                  store.KeyFunc,
+		newFunc:                  store.NewFunc,
+		defaultQualifiedResource: store.DefaultQualifiedResource,
+		storage:                  store.Storage.Storage,
 	}
 }
 
 // corruptObjectDeleter implements unsafe object deletion flow
 type corruptObjectDeleter struct {
-	rest.GracefulDeleter
+	store *Store
 
-	KeyFunc                  func(ctx context.Context, name string) (string, error)
-	NewFunc                  func() runtime.Object
-	DefaultQualifiedResource schema.GroupResource
+	keyFunc                  func(ctx context.Context, name string) (string, error)
+	newFunc                  func() runtime.Object
+	defaultQualifiedResource schema.GroupResource
 	// NOTE: not holding the DryRunnableStorage wrapper,
 	// directly using the storage interface
-	Storage storage.Interface
+	storage storage.Interface
 }
 
 // Delete performs an unsafe deletion of the given resource from the storage.
@@ -76,30 +75,27 @@ type corruptObjectDeleter struct {
 // flow, it is exclusively used when the delete option
 // 'IgnoreStoreReadErrorWithClusterBreakingPotential' is enabled by the user.
 func (s *corruptObjectDeleter) Delete(ctx context.Context, name string, deleteValidation rest.ValidateObjectFunc, opts *metav1.DeleteOptions) (runtime.Object, bool, error) {
-	const optionName = "ignoreStoreReadErrorWithClusterBreakingPotential"
 	if opts == nil || !ptr.Deref[bool](opts.IgnoreStoreReadErrorWithClusterBreakingPotential, false) {
-		// developer error, unsafe deleter should be invoked only when
-		// IgnoreStoreReadErrorWithClusterBreakingPotential is true
-		return nil, false, apierrors.NewInternalError(fmt.Errorf("expected %s to be enabled", optionName))
+		return s.store.Delete(ctx, name, deleteValidation, opts)
 	}
 
-	key, err := s.KeyFunc(ctx, name)
+	key, err := s.keyFunc(ctx, name)
 	if err != nil {
 		return nil, false, err
 	}
-	obj := s.NewFunc()
+	obj := s.newFunc()
 
 	qualifiedResource := s.qualifiedResourceFromContext(ctx)
 	// TODO: what if Get returns the object from cache, in this case the
 	// apiserver must restart for unsafe deletion to work
-	err = s.Storage.Get(ctx, key, storage.GetOptions{}, obj)
+	err = s.storage.Get(ctx, key, storage.GetOptions{}, obj)
 	if err == nil || !storage.IsCorruptObject(err) {
 		// TODO: The Invalid error should have a field for Resource.
 		// After that field is added, we should fill the Resource and
 		// leave the Kind field empty. See the discussion in #18526.
 		qualifiedKind := schema.GroupKind{Group: qualifiedResource.Group, Kind: qualifiedResource.Resource}
 		fieldErrList := field.ErrorList{
-			field.Invalid(field.NewPath(optionName), true, "it is exclusively used to delete corrupt object(s), try again by removing this option"),
+			field.Invalid(field.NewPath("ignoreStoreReadErrorWithClusterBreakingPotential"), true, "is exclusively used to delete corrupt object(s), try again by removing this option"),
 		}
 		return nil, false, apierrors.NewInvalid(qualifiedKind, name, fieldErrList)
 	}
@@ -117,10 +113,10 @@ func (s *corruptObjectDeleter) Delete(ctx context.Context, name string, deleteVa
 	}
 
 	klog.V(1).InfoS("Going to perform unsafe object deletion", "object", klog.KRef(genericapirequest.NamespaceValue(ctx), name))
-	out := s.NewFunc()
+	out := s.newFunc()
 	storageOpts := storage.DeleteOptions{IgnoreStoreReadError: true}
 	// keep the admission
-	if err := s.Storage.Delete(ctx, key, out, preconditions, storage.ValidateObjectFunc(deleteValidation), nil, storageOpts); err != nil {
+	if err := s.storage.Delete(ctx, key, out, preconditions, storage.ValidateObjectFunc(deleteValidation), nil, storageOpts); err != nil {
 		if storage.IsNotFound(err) {
 			// the DELETE succeeded, but we don't have the object since it's
 			// not retrievable from the storage, so we send a nil object
@@ -138,5 +134,5 @@ func (s *corruptObjectDeleter) qualifiedResourceFromContext(ctx context.Context)
 		return schema.GroupResource{Group: info.APIGroup, Resource: info.Resource}
 	}
 	// some implementations access storage directly and thus the context has no RequestInfo
-	return s.DefaultQualifiedResource
+	return s.defaultQualifiedResource
 }
