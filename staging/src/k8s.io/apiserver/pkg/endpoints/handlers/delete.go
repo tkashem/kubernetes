@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/audit"
+	"k8s.io/apiserver/pkg/endpoints/handlers/admission/unsafedeletepolicy"
 	"k8s.io/apiserver/pkg/endpoints/handlers/finisher"
 	requestmetrics "k8s.io/apiserver/pkg/endpoints/handlers/metrics"
 	"k8s.io/apiserver/pkg/endpoints/handlers/negotiation"
@@ -123,6 +124,10 @@ func DeleteResource(r rest.GracefulDeleter, allowsOptions bool, scope *RequestSc
 		}
 		options.TypeMeta.SetGroupVersionKind(metav1.SchemeGroupVersion.WithKind("DeleteOptions"))
 
+		userInfo, _ := request.UserFrom(ctx)
+		staticAdmissionAttrs := admission.NewAttributesRecord(nil, nil, scope.Kind, namespace, name, scope.Resource, scope.Subresource, admission.Delete, options, dryrun.IsDryRun(options.DryRun), userInfo)
+		deleteValiation := rest.AdmissionToValidateObjectDeleteFunc(admit, staticAdmissionAttrs, scope)
+
 		if utilfeature.DefaultFeatureGate.Enabled(features.AllowUnsafeMalformedObjectDeletion) {
 			if options != nil && ptr.Deref(options.IgnoreStoreReadErrorWithClusterBreakingPotential, false) {
 				p, ok := r.(rest.CorruptObjectDeleterProvider)
@@ -131,16 +136,30 @@ func DeleteResource(r rest.GracefulDeleter, allowsOptions bool, scope *RequestSc
 					scope.err(errors.NewInternalError(fmt.Errorf("no unsafe deleter provided, can not honor ignoreStoreReadErrorWithClusterBreakingPotential")), w, req)
 					return
 				}
+				if scope.Authorizer == nil {
+					scope.err(errors.NewInternalError(fmt.Errorf("no authorizer provided, unable to authorize unsafe delete")), w, req)
+					return
+				}
+
+				nextAdmission := deleteValiation
+				deleteValiation = func(ctx context.Context, old runtime.Object) error {
+					validator := unsafedeletepolicy.New(scope.Authorizer)
+
+					// we first check if the user has permission to do unsafe delete
+					if err := validator.Validate(ctx, staticAdmissionAttrs, scope); err != nil {
+						return err
+					}
+					// continue to validating admission
+					return nextAdmission(ctx, old)
+				}
 				r = p.GetCorruptObjDeleter()
 			}
 		}
 
 		span.AddEvent("About to delete object from database")
 		wasDeleted := true
-		userInfo, _ := request.UserFrom(ctx)
-		staticAdmissionAttrs := admission.NewAttributesRecord(nil, nil, scope.Kind, namespace, name, scope.Resource, scope.Subresource, admission.Delete, options, dryrun.IsDryRun(options.DryRun), userInfo)
 		result, err := finisher.FinishRequest(ctx, func() (runtime.Object, error) {
-			obj, deleted, err := r.Delete(ctx, name, rest.AdmissionToValidateObjectDeleteFunc(admit, staticAdmissionAttrs, scope), options)
+			obj, deleted, err := r.Delete(ctx, name, deleteValiation, options)
 			wasDeleted = deleted
 			return obj, err
 		})
