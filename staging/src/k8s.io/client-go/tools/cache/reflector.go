@@ -809,6 +809,9 @@ loop:
 				break loop
 			}
 			if event.Type == watch.Error {
+				if err := handleUnsafeDeleteEventError(name, event, store, setLastSyncResourceVersion); err != nil {
+					return watchListBookmarkReceived, err
+				}
 				return watchListBookmarkReceived, apierrors.FromObject(event.Object)
 			}
 			if expectedType != nil {
@@ -878,6 +881,41 @@ loop:
 	}
 	klog.V(4).Infof("%s: Watch close - %v total %v items received", name, expectedTypeName, eventCount)
 	return watchListBookmarkReceived, nil
+}
+
+// handleUnsafeDeleteEventError inspects an Error event, determines if it represents an
+// unsafe delete of a corrupt object, and then updates the reflector states accordingly.
+// It returns an error to indicate that
+func handleUnsafeDeleteEventError(name string, event watch.Event, store Store, setLastSyncResourceVersion func(string)) error {
+	if event.Type != watch.Error || event.Object == nil {
+		return nil
+	}
+	meta, err := meta.Accessor(event.Object)
+	if err != nil {
+		return nil
+	}
+	if _, ok := meta.GetAnnotations()[metav1.UnsafeDeleteEventKey]; !ok {
+		return nil
+	}
+
+	// the object was corrupt and it was unsafe-deleted, we will do the following:
+	// a) remove it from the store so controllers are in sync with the current state
+	// b) set the LastSyncResourceVersion to the revision of the storage
+	// after the delete operation
+	if err := store.Delete(event.Object); err != nil {
+		utilruntime.HandleError(fmt.Errorf("%s: unable to delete watch event object (%#v) from store: %w", name, event.Object, err))
+	}
+	if rv := meta.GetResourceVersion(); len(rv) > 0 {
+		setLastSyncResourceVersion(rv)
+		if rvu, ok := store.(ResourceVersionUpdater); ok {
+			rvu.UpdateResourceVersion(rv)
+		}
+	}
+
+	// we return an internal error so the watch can resume with the
+	// resource version after the delete operation
+	err = fmt.Errorf("corrupt object deletion event, namespace: %q name: %q, revision: %q", meta.GetNamespace(), meta.GetName(), meta.GetResourceVersion())
+	return apierrors.NewInternalError(err)
 }
 
 // LastSyncResourceVersion is the resource version observed when last sync with the underlying store

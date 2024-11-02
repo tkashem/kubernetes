@@ -24,6 +24,7 @@ import (
 	"reflect"
 	goruntime "runtime"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1751,6 +1752,101 @@ func TestReflectorListExtract(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestReflectorWithUnsafeDelete(t *testing.T) {
+	mkPod := func(id string, rv string, annotation bool) *v1.Pod {
+		pod := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: id, ResourceVersion: rv}}
+		if annotation {
+			pod.Annotations = map[string]string{
+				metav1.UnsafeDeleteEventKey: "true",
+			}
+		}
+		return pod
+	}
+	mkList := func(rv string, pods ...*v1.Pod) *v1.PodList {
+		list := &v1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: rv}}
+		for _, pod := range pods {
+			list.Items = append(list.Items, *pod)
+		}
+		return list
+	}
+
+	list := mkList("1")
+	events := []watch.Event{
+		{Type: watch.Added, Object: mkPod("foo", "2", false)},
+		// the object gets corrupt, and it gets deleted
+		{Type: watch.Error, Object: mkPod("foo", "3", true)},
+	}
+
+	s := NewFIFO(MetaNamespaceKeyFunc)
+	var deleteInvoked atomic.Int32
+	store := &fakeStore{
+		Store: s,
+		beforeDelete: func(obj interface{}) {
+			deleteInvoked.Add(1)
+			_, exists, err := s.Get(obj)
+			if err != nil || !exists {
+				t.Errorf("expected the object to exist in the store, exists: %t, err: %v", exists, err)
+			}
+		},
+		afterDelete: func(err error, obj interface{}) {
+			deleteInvoked.Add(1)
+			if err != nil {
+				t.Errorf("expected delete to have succeeded, but got error: %v", err)
+			}
+			_, exists, err := s.Get(obj)
+			if err != nil || exists {
+				t.Errorf("expected the object to have been removed from the store, exists: %t, err: %v", exists, err)
+			}
+		},
+	}
+	stopCh := make(chan struct{})
+	lw := &testLW{
+		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			fw := watch.NewFake()
+			go func() {
+				for _, e := range events {
+					fw.Action(e.Type, e.Object)
+				}
+				// Because FakeWatcher doesn't buffer events, it's safe to
+				// close the stop channel immediately without missing events.
+				// But usually, the event producer would instead close the
+				// result channel, and wait for the consumer to stop the
+				// watcher, to avoid race conditions.
+				// TODO: Fix the FakeWatcher to separate watcher.Stop from close(resultCh)
+				close(stopCh)
+			}()
+			return fw, nil
+		},
+		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+			return list, nil
+		},
+	}
+
+	r := NewReflector(lw, &v1.Pod{}, store, 0)
+	if err := r.ListAndWatch(stopCh); err != nil {
+		t.Errorf("unexpected error from ListAndWatch: %v", err)
+	}
+	if want, got := "3", r.LastSyncResourceVersion(); want != got {
+		t.Errorf("expected LastSyncResourceVersion to be %q, but got: %q", want, got)
+	}
+	if want, got := 2, int(deleteInvoked.Load()); want != got {
+		t.Errorf("expected store Delete hooks to be invoked %d times, but got: %d", want, got)
+	}
+}
+
+type fakeStore struct {
+	Store
+	beforeDelete func(obj interface{})
+	afterDelete  func(err error, obj interface{})
+}
+
+func (f *fakeStore) Delete(obj interface{}) error {
+	f.beforeDelete(obj)
+	err := f.Store.Delete(obj)
+	f.afterDelete(err, obj)
+	return err
 }
 
 func BenchmarkExtractList(b *testing.B) {

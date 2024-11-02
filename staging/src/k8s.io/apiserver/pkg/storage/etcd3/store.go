@@ -153,6 +153,7 @@ func newStore(c *kubernetes.Client, codec runtime.Codec, newFunc, newListFunc fu
 		groupResource: groupResource,
 		versioner:     versioner,
 		transformer:   transformer,
+		pathPrefix:    pathPrefix,
 	}
 	if newFunc == nil {
 		w.objectType = "<unknown>"

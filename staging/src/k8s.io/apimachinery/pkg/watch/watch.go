@@ -78,6 +78,9 @@ type Event struct {
 	//    nor miss any events.
 	//  * If Type is Error: *api.Status is recommended; other types may make sense
 	//    depending on context.
+	//    An Error event may have a partial object (instance of a type being
+	//    watched) with the annotation 'kubernetes.io/unsafe-delete-ignore-read-errors'
+	//    to indicate that this object was corrupt and unsafe-deleted from the store.
 	Object runtime.Object
 }
 

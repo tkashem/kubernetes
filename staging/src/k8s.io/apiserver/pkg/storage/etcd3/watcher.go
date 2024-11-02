@@ -31,6 +31,8 @@ import (
 	grpcstatus "google.golang.org/grpc/status"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -76,6 +78,7 @@ type watcher struct {
 	groupResource       schema.GroupResource
 	versioner           storage.Versioner
 	transformer         value.Transformer
+	pathPrefix          string
 	getCurrentStorageRV func(context.Context) (uint64, error)
 }
 
@@ -634,15 +637,23 @@ func (wc *watchChan) transform(e *event) (res *watch.Event) {
 }
 
 func transformErrorToEvent(err error) *watch.Event {
+	event := &watch.Event{Type: watch.Error}
+
+	var corruptobjDeletedErr *corruptObjectDeletedError
+	if errors.As(err, &corruptobjDeletedErr) {
+		// when a corrupt object is deleted from the store we send it as
+		// and event of type: ERROR along with the partial object
+		event.Object = corruptobjDeletedErr.obj
+		return event
+	}
+
 	err = interpretWatchError(err)
 	if _, ok := err.(apierrors.APIStatus); !ok {
 		err = apierrors.NewInternalError(err)
 	}
 	status := err.(apierrors.APIStatus).Status()
-	return &watch.Event{
-		Type:   watch.Error,
-		Object: &status,
-	}
+	event.Object = &status
+	return event
 }
 
 func (wc *watchChan) sendError(err error) {
@@ -686,16 +697,88 @@ func (wc *watchChan) prepareObjs(e *event) (curObj runtime.Object, oldObj runtim
 	if len(e.prevValue) > 0 && (e.isDeleted || !wc.acceptAll()) {
 		data, _, err := wc.watcher.transformer.TransformFromStorage(wc.ctx, e.prevValue, authenticatedDataString(e.key))
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, wc.watcher.transformIfCorruptObjectError(e, err)
 		}
 		// Note that this sends the *old* object with the etcd revision for the time at
 		// which it gets deleted.
 		oldObj, err = decodeObj(wc.watcher.codec, wc.watcher.versioner, data, e.rev)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, wc.watcher.transformIfCorruptObjectError(e, err)
 		}
 	}
 	return curObj, oldObj, nil
+}
+
+type corruptObjectDeletedError struct {
+	obj runtime.Object
+	err error
+}
+
+func (e *corruptObjectDeletedError) Error() string {
+	return fmt.Sprintf("corrupt object has been deleted -%v", e.err.Error())
+}
+func (e *corruptObjectDeletedError) Unwrap() error { return e.err }
+
+func (w *watcher) transformIfCorruptObjectError(e *event, err error) error {
+	var corruptObjErr *corruptObjectError
+	if !e.isDeleted || !errors.As(err, &corruptObjErr) {
+		return err
+	}
+
+	// if we are here it means we received a DELETED event but the object
+	// associated with it was corrupt, since we don't have the object data
+	// we will create a partial object with the following attributes:
+	//  Name: name of the object retrieved from the storage key
+	//  Namespace: namespace of the object retrieved from the storage
+	//  key, for a cluster scoped object it will be empty
+	//  ResourceVersion: it is the Revision of the key-value store after
+	//  the Delete operation.
+	//
+	// we will set the following annotation:
+	//  "unsafe-delete-ignore-read-errors" : "true"
+	// This indicates that the object associated with the
+	// DELETED event was corrupt
+	object := w.newFunc()
+	if err := w.versioner.UpdateObject(object, uint64(e.rev)); err != nil {
+		return fmt.Errorf("failed to propagate object version: %w", err)
+	}
+	namespace, name := getNamespaceName(w.pathPrefix, e.key)
+	meta, err := meta.Accessor(object)
+	if err != nil {
+		return fmt.Errorf("unable to access meta attributes: %w", err)
+	}
+	meta.SetNamespace(namespace)
+	meta.SetName(name)
+	meta.SetAnnotations(map[string]string{
+		metav1.UnsafeDeleteEventKey: "true",
+	})
+
+	// wrap the original error so we can include the partial object in the error chain
+	return &corruptObjectDeletedError{err: err, obj: object}
+}
+
+func getNamespaceName(pathPrefix, path string) (namespace string, name string) {
+	after, found := strings.CutPrefix(path, pathPrefix)
+	if !found {
+		return "", ""
+	}
+	split := make([]string, 0)
+	for _, s := range strings.Split(after, "/") {
+		if s == "" {
+			continue
+		}
+		split = append(split, s)
+	}
+
+	switch len(split) {
+	case 3:
+		// '/{type}/{namespace}/{name}'
+		return split[1], split[2]
+	case 2:
+		// '/{type}/{name}'
+		return "", split[1]
+	}
+	return "", ""
 }
 
 func decodeObj(codec runtime.Codec, versioner storage.Versioner, data []byte, rev int64) (_ runtime.Object, err error) {

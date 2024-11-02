@@ -40,8 +40,10 @@ import (
 	"k8s.io/apiserver/pkg/storage/value"
 	aestransformer "k8s.io/apiserver/pkg/storage/value/encrypt/aes"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	"k8s.io/client-go/informers"
 	clientset "k8s.io/client-go/kubernetes"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 	"k8s.io/kubernetes/test/integration/authutil"
 	"k8s.io/utils/ptr"
@@ -150,6 +152,9 @@ func TestAllowUnsafeMalformedObjectDeletionFeature(t *testing.T) {
 		corrupObjDeleteWithOptionAndPrivilege verifier
 		// what we expect for GET on the corrupt object (post deletion)
 		corrupObjGetPostDelete verifier
+		// what we expect for GET on the corrupt object ( via the
+		// informer cache post deletion)
+		corrupObjGetFromListerCachePostDelete verifier
 	}{
 		{
 			featureEnabled: true,
@@ -166,6 +171,8 @@ func TestAllowUnsafeMalformedObjectDeletionFeature(t *testing.T) {
 			},
 			corrupObjDeleteWithOptionAndPrivilege: wantNoError{},
 			corrupObjGetPostDelete:                wantAPIStatusError{reason: metav1.StatusReasonNotFound},
+			// after the unsafe delete, we expect the reflector to remove the object from the cache
+			corrupObjGetFromListerCachePostDelete: wantAPIStatusError{reason: metav1.StatusReasonNotFound},
 		},
 		{
 			featureEnabled: false,
@@ -178,6 +185,9 @@ func TestAllowUnsafeMalformedObjectDeletionFeature(t *testing.T) {
 			corrupObjDeleteWithOption:             wantAPIStatusError{reason: metav1.StatusReasonInternalError},
 			corrupObjDeleteWithOptionAndPrivilege: wantAPIStatusError{reason: metav1.StatusReasonInternalError},
 			corrupObjGetPostDelete:                wantAPIStatusError{reason: metav1.StatusReasonInternalError},
+			// although the object is corrupt and unreadable from the underlying
+			// storage, the controller cache continues to serve the object
+			corrupObjGetFromListerCachePostDelete: wantNoError{},
 		},
 	}
 	for _, tc := range tests {
@@ -236,7 +246,23 @@ func TestAllowUnsafeMalformedObjectDeletionFeature(t *testing.T) {
 
 			test.runResource(test.TContext, unSealWithGCMTransformer, aesGCMPrefix, "", "v1", "secrets", test.secret.Name, test.secret.Namespace)
 
-			// f) override the config and break decryption of the old resources,
+			// f) create an informer, and wait for it to sync
+			factory := informers.NewSharedInformerFactoryWithOptions(adminClient, time.Minute, informers.WithNamespace(testNamespace))
+			informer := factory.Core().V1().Secrets()
+			lister := informer.Lister()
+			factory.Start(test.Done())
+			waitForSyncCtx, waitForSyncCancel := context.WithTimeout(context.Background(), wait.ForeverTestTimeout)
+			defer waitForSyncCancel()
+			if !cache.WaitForCacheSync(waitForSyncCtx.Done(), informer.Informer().HasSynced) {
+				t.Fatalf("caches failed to sync")
+			}
+
+			// g) the secret should be readable from the cache
+			if _, err := lister.Secrets(testNamespace).Get(secretCorrupt); err != nil {
+				t.Errorf("unexpected failure getting the secret from lister cache: %v", err)
+			}
+
+			// h) override the config and break decryption of the old resources,
 			// the secret created in step b will be undecryptable
 			now := time.Now()
 			encryptionConf := filepath.Join(test.configDir, encryptionConfigFileName)
@@ -249,7 +275,7 @@ func TestAllowUnsafeMalformedObjectDeletionFeature(t *testing.T) {
 			body, _ = ioutil.ReadFile(encryptionConf)
 			t.Logf("file after write: %s", body)
 
-			// g) wait for the breaking changes to take effect
+			// i) wait for the breaking changes to take effect
 			testCtx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			err = wait.PollUntilContextTimeout(testCtx, 1*time.Second, 2*time.Minute, true, func(ctx context.Context) (done bool, err error) {
@@ -268,7 +294,7 @@ func TestAllowUnsafeMalformedObjectDeletionFeature(t *testing.T) {
 			}
 			t.Logf("it took %s for the apiserver to reload the encryption config", time.Since(now))
 
-			// h) create a new secret, and then delete it, it should work
+			// j) create a new secret, and then delete it, it should work
 			secretNormal := "bar-with-normal-delete"
 			_, err = test.createSecret(secretNormal, testNamespace)
 			if err != nil {
@@ -279,16 +305,20 @@ func TestAllowUnsafeMalformedObjectDeletionFeature(t *testing.T) {
 				t.Fatalf("'%s/%s' failed to create, got error: %v", err, testNamespace, secretNormal)
 			}
 
-			// i) let's try to get the broken secret created in step b, we expect it
-			// to fail, the error will vary depending on whether the feature is enabled
+			// k) let's try to get the broken secret created in step b, we expect it
+			// to fail, the error will vary depending on whether the feature is enabled.
+			// but the cache still serves the object
 			_, err = test.restClient.CoreV1().Secrets(testNamespace).Get(context.Background(), secretCorrupt, metav1.GetOptions{})
 			tc.corruptObjGetPreDelete.verify(t, err)
+			if _, err := lister.Secrets(testNamespace).Get(secretCorrupt); err != nil {
+				t.Errorf("unexpected failure when etting the secret from the cache: %v", err)
+			}
 
-			// j) let's try the normal deletion flow, we expect an error
+			// l) let's try the normal deletion flow, we expect an error
 			err = test.restClient.CoreV1().Secrets(testNamespace).Delete(context.Background(), secretCorrupt, metav1.DeleteOptions{})
 			tc.corrupObjDeletWithoutOption.verify(t, err)
 
-			// k) make an attempt to delete the corrupt object by enabling the option,
+			// m) make an attempt to delete the corrupt object by enabling the option,
 			// on the other hand, we have not granted the 'delete-ignore-read-errors'
 			// verb to the user yet, so we expect admission to deny the delete request
 			options := metav1.DeleteOptions{
@@ -297,16 +327,21 @@ func TestAllowUnsafeMalformedObjectDeletionFeature(t *testing.T) {
 			err = test.restClient.CoreV1().Secrets(testNamespace).Delete(context.Background(), secretCorrupt, options)
 			tc.corrupObjDeleteWithOption.verify(t, err)
 
-			// l) grant the test user to do 'unsafe-delete-ignore-read-errors' on secrets
+			// n) grant the test user to do 'unsafe-delete-ignore-read-errors' on secrets
 			permitUserToDoVerbOnSecret(t, adminClient, testUser, testNamespace, []string{"unsafe-delete-ignore-read-errors"})
 
-			// m) let's try to do unsafe delete again
+			// o) let's try to do unsafe delete again
 			err = test.restClient.CoreV1().Secrets(testNamespace).Delete(context.Background(), secretCorrupt, options)
 			tc.corrupObjDeleteWithOptionAndPrivilege.verify(t, err)
 
-			// j) final get should return a NotFound error after the secret has been deleted
+			// p) final get should return a NotFound error after the secret has been deleted
 			_, err = test.restClient.CoreV1().Secrets(testNamespace).Get(context.Background(), secretCorrupt, metav1.GetOptions{})
 			tc.corrupObjGetPostDelete.verify(t, err)
+
+			// q) read the object from the cache, with the feature enabled we expect the lister to return
+			// a NotFound error, otherwise the lister will continue to serve the object from the cache
+			_, err = lister.Secrets(testNamespace).Get(secretCorrupt)
+			tc.corrupObjGetFromListerCachePostDelete.verify(t, err)
 		})
 	}
 }

@@ -453,6 +453,15 @@ const (
 	// to guarantee the format consistency when reconstructing
 	// the list during WatchList processing.
 	InitialEventsListBlueprintAnnotationKey = "kubernetes.io/initial-events-list-blueprint"
+
+	// UnsafeDeleteEventKey is the name of the key that represents an unsafe
+	// delete event for a watch.
+	// This annotation is added to the partial object (of the type that is
+	// being watched) associated with the watch ERROR event.
+	//
+	// This error event implies that the object was corrupt and was deleted
+	// from the store.
+	UnsafeDeleteEventKey = "kubernetes.io/unsafe-delete-ignore-read-errors"
 )
 
 // resourceVersionMatch specifies how the resourceVersion parameter is applied. resourceVersionMatch

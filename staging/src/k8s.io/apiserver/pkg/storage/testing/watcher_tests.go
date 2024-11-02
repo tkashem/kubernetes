@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -405,6 +406,80 @@ func RunTestWatchError(ctx context.Context, t *testing.T, store InterfaceWithPre
 		t.Fatalf("Watch failed: %v", err)
 	}
 	testCheckEventType(t, w, watch.Error)
+}
+
+func RunTestWatchWithUnsafeDelete(ctx context.Context, t *testing.T, store InterfaceWithCorruptTransformer) {
+	obj := &example.Pod{ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "test-ns"}}
+	key := computePodKey(obj)
+
+	out := &example.Pod{}
+	if err := store.Create(ctx, key, obj, out, 0); err != nil {
+		t.Fatalf("failed to create object in the store: %v", err)
+	}
+
+	// Compute the initial resource version from which we can start watching later.
+	list := &example.PodList{}
+	storageOpts := storage.ListOptions{
+		ResourceVersion: "0",
+		Predicate:       storage.Everything,
+		Recursive:       true,
+	}
+	if err := store.GetList(ctx, "/pods", storageOpts, list); err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	// Now trigger watch error by injecting failing transformer.
+	revertTransformer := store.CorruptTransformer()
+	defer revertTransformer()
+
+	w, err := store.Watch(ctx, key, storage.ListOptions{ResourceVersion: list.ResourceVersion, Predicate: storage.Everything})
+	if err != nil {
+		t.Fatalf("Watch failed: %v", err)
+	}
+
+	// normal deletetion should fail
+	if err := store.Delete(ctx, key, &example.Pod{}, &storage.Preconditions{}, storage.ValidateAllObjectFunc, nil, storage.DeleteOptions{}); err == nil {
+		t.Fatalf("Expected normal Delete to fail")
+	}
+	if err := store.Delete(ctx, key, &example.Pod{}, &storage.Preconditions{}, storage.ValidateAllObjectFunc, nil, storage.DeleteOptions{IgnoreStoreReadError: true}); err != nil {
+		t.Fatalf("Expected unsafe Delete to succeed, but got: %v", err)
+	}
+
+	testCheckResultFunc(t, w, func(got watch.Event) {
+		t.Logf("type: %q, object: %#v", got.Type, got.Object)
+
+		if want, got := watch.Error, got.Type; want != got {
+			t.Errorf("Expected event type: %q, but got: %q", want, got)
+		}
+		meta, err := meta.Accessor(got.Object)
+		if err != nil {
+			t.Fatalf("Expected a meta object, but got error: %v", err)
+		}
+		if want, got := obj.Namespace, meta.GetNamespace(); want != got {
+			t.Errorf("Expected namespace: %q, but got: %q", want, got)
+		}
+		if want, got := obj.Name, meta.GetName(); want != got {
+			t.Errorf("Expected name: %q, but got: %q", want, got)
+		}
+
+		const annotationKeyWant = metav1.UnsafeDeleteEventKey
+		if _, ok := meta.GetAnnotations()[annotationKeyWant]; !ok {
+			t.Errorf("Expected the annotation %q to be present in the watch error event", annotationKeyWant)
+		}
+
+		// the reveion version in the error must be greater
+		rvOrig, err := strconv.Atoi(out.ResourceVersion)
+		if err != nil {
+			t.Errorf("Unexpected error getting revision of the original object: %v", err)
+		}
+		rvGot, err := strconv.Atoi(meta.GetResourceVersion())
+		if err != nil {
+			t.Errorf("Unexpected error getting revision from the watch error event: %v", err)
+		}
+		if rvGot <= rvOrig {
+			t.Errorf("Expected revision in the watch event: %d to be greater than the original object revision: %d", rvGot, rvOrig)
+		}
+	})
 }
 
 func RunTestWatchContextCancel(ctx context.Context, t *testing.T, store storage.Interface) {
