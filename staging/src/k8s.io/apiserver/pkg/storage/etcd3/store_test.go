@@ -199,7 +199,7 @@ type corruptedTransformer struct {
 }
 
 func (f *corruptedTransformer) TransformFromStorage(ctx context.Context, data []byte, dataCtx value.Context) (out []byte, stale bool, err error) {
-	return nil, true, &corruptObjectError{}
+	return nil, true, &corruptObjectError{err: fmt.Errorf("bits flipped"), errType: untransformable}
 }
 
 type storeWithCorruptedTransformer struct {

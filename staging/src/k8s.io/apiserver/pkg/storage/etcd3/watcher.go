@@ -715,7 +715,7 @@ type corruptObjectDeletedError struct {
 }
 
 func (e *corruptObjectDeletedError) Error() string {
-	return fmt.Sprintf("corrupt object has been deleted -%v", e.err.Error())
+	return fmt.Sprintf("saw a DELETED event, but the object is corrupt: %v", e.err)
 }
 func (e *corruptObjectDeletedError) Unwrap() error { return e.err }
 
@@ -754,7 +754,7 @@ func (w *watcher) transformIfCorruptObjectError(e *event, err error) error {
 	})
 
 	// wrap the original error so we can include the partial object in the error chain
-	return &corruptObjectDeletedError{err: err, obj: object}
+	return &corruptObjectDeletedError{err: corruptObjErr, obj: object}
 }
 
 func getNamespaceName(pathPrefix, path string) (namespace string, name string) {

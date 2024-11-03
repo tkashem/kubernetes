@@ -885,7 +885,7 @@ loop:
 
 // handleUnsafeDeleteEventError inspects an Error event, determines if it represents an
 // unsafe delete of a corrupt object, and then updates the reflector states accordingly.
-// It returns an error to indicate that
+// It returns an error to indicate that the unsafe delete has been handled
 func handleUnsafeDeleteEventError(name string, event watch.Event, store Store, setLastSyncResourceVersion func(string)) error {
 	if event.Type != watch.Error || event.Object == nil {
 		return nil
