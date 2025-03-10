@@ -172,6 +172,35 @@ func testCheckResultFunc(t *testing.T, w watch.Interface, check func(actualEvent
 	}
 }
 
+func testCollectWatchEvents(t *testing.T, w watch.Interface, count int) []watch.Event {
+	t.Helper()
+
+	got := make([]watch.Event, 0)
+	after := time.After(wait.ForeverTestTimeout)
+	for {
+		if len(got) == count {
+			break
+		}
+
+		select {
+		case res, ok := <-w.ResultChan():
+			if !ok {
+				return got
+			}
+			obj := res.Object
+			if co, ok := obj.(runtime.CacheableObject); ok {
+				res.Object = co.GetObject()
+			}
+			got = append(got, res)
+			t.Logf("event: %#v", res)
+		case <-after:
+			t.Errorf("time out after waiting %v on ResultChan", wait.ForeverTestTimeout)
+			return got
+		}
+	}
+	return got
+}
+
 func testCheckResultWithIgnoreFunc(t *testing.T, w watch.Interface, expectedEvents []watch.Event, ignore func(watch.Event) bool) {
 	checkIndex := 0
 	for {

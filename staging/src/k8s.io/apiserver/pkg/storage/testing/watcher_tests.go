@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -470,6 +471,151 @@ func RunTestWatchWithUnsafeDelete(ctx context.Context, t *testing.T, store Inter
 			t.Errorf("expected an metav1 Status object, but got: %v", got.Object)
 		}
 	})
+}
+
+func RunTestWatchWithUnsafeDeletion(t *testing.T, newStore func(t *testing.T) (context.Context, InterfaceWithCorruptTransformer)) {
+	tests := []struct {
+		name           string
+		featureEnabled bool
+		// want
+		events []watch.Event
+	}{
+		{
+			name:           "tbd",
+			featureEnabled: true,
+			events: []watch.Event{
+				{
+					Type: watch.Error,
+					Object: &metav1.Status{
+						Reason: metav1.StatusReasonStoreReadError,
+					},
+				},
+				{},
+				{},
+				{},
+				{},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			featuregatetesting.SetFeatureGateDuringTest(t, utilfeature.DefaultFeatureGate, features.AllowUnsafeMalformedObjectDeletion, test.featureEnabled)
+			ctx, store := newStore(t)
+
+			// a) add two objects a, and b (initial state)
+			namespace := "test-ns"
+			state := []struct {
+				in, out *example.Pod
+				key     string
+			}{
+				{
+					// this will go corrupt
+					in: &example.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "a",
+							Namespace: namespace,
+							Annotations: map[string]string{
+								CorruptErrKey: "1",
+							},
+						},
+					},
+				},
+				{
+					// this will never go corrupt
+					in: &example.Pod{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "b",
+							Namespace: namespace,
+							Annotations: map[string]string{
+								"key": "1",
+							},
+						},
+					},
+				},
+			}
+			for i := range state {
+				item := &state[i]
+				item.key = computePodKey(item.in)
+				out := &example.Pod{}
+				if err := store.Create(ctx, item.key, item.in, out, 0); err != nil {
+					t.Fatalf("failed to create object in the store: %v", err)
+				}
+				item.out = out
+			}
+			a, b := state[0], state[1]
+
+			// b) compute the initial resource version from which we can start watching later.
+			initialList := &example.PodList{}
+			storageOpts := storage.ListOptions{
+				ResourceVersion: "0",
+				Predicate:       storage.Everything,
+				Recursive:       true,
+			}
+			if err := store.GetList(ctx, "/pods", storageOpts, initialList); err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			t.Logf("start watching from ResourceVersion=%s", initialList.ResourceVersion)
+
+			updateFn := func(key string, f func(runtime.Object) (runtime.Object, error)) *example.Pod {
+				out := &example.Pod{}
+				err := store.GuaranteedUpdate(ctx, key, out, true, nil, storage.SimpleUpdate(f), nil)
+				if err != nil {
+					t.Fatalf("GuaranteedUpdate failed: %v", err)
+				}
+				return out
+			}
+
+			// c) update object 'a' before it goes corrupt
+			//a.out = updateFn(a.key, func(obj runtime.Object) (runtime.Object, error) {
+			//	updated := obj.DeepCopyObject().(*example.Pod)
+			//	updated.Annotations["key"] = "2"
+			//	return updated, nil
+			//})
+			//t.Logf("updated object a, ResourceVersion=%s", a.out.ResourceVersion)
+
+			// d) change the transformer so certain objects become corrupt
+			revertTransformer := store.CorruptTransformer()
+			defer revertTransformer()
+
+			// e) establish a watch from the initial revision.
+			w, err := store.Watch(ctx, "/pods/"+namespace+"/", storage.ListOptions{ResourceVersion: initialList.ResourceVersion, Predicate: storage.Everything, Recursive: true})
+			if err != nil {
+				t.Fatalf("Watch failed: %v", err)
+			}
+			defer w.Stop()
+
+			// f) normal deletetion of a should fail first, then try unsafe delete
+			if err := store.Delete(ctx, a.key, &example.Pod{}, nil, storage.ValidateAllObjectFunc, nil, storage.DeleteOptions{}); err == nil {
+				t.Fatalf("Expected normal deletion flow to fail")
+			}
+			if err := store.Delete(ctx, a.key, &example.Pod{}, nil, storage.ValidateAllObjectFunc, nil, storage.DeleteOptions{IgnoreStoreReadError: true}); err != nil {
+				t.Fatalf("Expected unsafe Delete to succeed, but got: %v", err)
+			}
+			t.Logf("force deleted object a, key=%q", a.key)
+
+			// c) update object 'b', this marks the last watch event expected
+			b.out = updateFn(b.key, func(obj runtime.Object) (runtime.Object, error) {
+				updated := obj.DeepCopyObject().(*example.Pod)
+				updated.Annotations["key"] = "2"
+				return updated, nil
+			})
+			t.Logf("updated object b, ResourceVersion=%s", b.out.ResourceVersion)
+
+			// create object a, this time it should not go corrupt
+			delete(a.in.Annotations, CorruptErrKey)
+			if err := store.Create(ctx, a.key, a.in, a.out, 0); err != nil {
+				t.Fatalf("failed to create object in the store: %v", err)
+			}
+			t.Logf("created object a, ResourceVersion=%s", a.out.ResourceVersion)
+
+			// h) verify the watch events we should see
+			t.Logf("len: %d", len(test.events))
+			if want, got := test.events, testCollectWatchEvents(t, w, len(test.events)); !cmp.Equal(want, got) {
+				t.Errorf("expected %d events - diff: %s", len(test.events), cmp.Diff(want, got))
+			}
+		})
+	}
 }
 
 func RunTestWatchContextCancel(ctx context.Context, t *testing.T, store storage.Interface) {

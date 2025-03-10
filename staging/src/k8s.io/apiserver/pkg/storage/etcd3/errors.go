@@ -22,7 +22,9 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apiserver/pkg/features"
 	"k8s.io/apiserver/pkg/storage"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 
 	etcdrpc "go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -34,15 +36,17 @@ func interpretWatchError(err error) error {
 		return errors.NewResourceExpired("The resourceVersion for the provided watch is too old.")
 	}
 
-	var corruptobjDeletedErr *corruptObjectDeletedError
-	if goerrors.As(err, &corruptobjDeletedErr) {
-		return &errors.StatusError{
-			ErrStatus: metav1.Status{
-				Status:  metav1.StatusFailure,
-				Code:    http.StatusInternalServerError,
-				Reason:  metav1.StatusReasonStoreReadError,
-				Message: corruptobjDeletedErr.Error(),
-			},
+	if utilfeature.DefaultFeatureGate.Enabled(features.AllowUnsafeMalformedObjectDeletion) {
+		var corruptobjDeletedErr *corruptObjectDeletedError
+		if goerrors.As(err, &corruptobjDeletedErr) {
+			return &errors.StatusError{
+				ErrStatus: metav1.Status{
+					Status:  metav1.StatusFailure,
+					Code:    http.StatusInternalServerError,
+					Reason:  metav1.StatusReasonStoreReadError,
+					Message: corruptobjDeletedErr.Error(),
+				},
+			}
 		}
 	}
 
